@@ -34,6 +34,7 @@ const DEFAULT_MINING_AGENT_ADDRESS = undefined;
 const DEFAULT_AGENT_COIN_ADDRESS = undefined;
 
 const EXPENSIVE_MODELS = ["gpt-4o", "gpt-4", "claude-3-opus", "claude-3-5-sonnet"];
+const CHEAP_OVERRIDES = ["gpt-4o-mini", "gpt-4-mini"];
 
 function normalizeProvider(value?: string): LlmProvider {
   if (value === "anthropic" || value === "ollama" || value === "openai" || value === "gemini" || value === "claude-code" || value === "codex") {
@@ -130,7 +131,9 @@ export function requireLlmApiKey(): string {
 }
 
 export function isExpensiveModel(model: string): boolean {
-  return EXPENSIVE_MODELS.some((m) => model.toLowerCase().startsWith(m));
+  const m = model.toLowerCase();
+  if (CHEAP_OVERRIDES.some((c) => m.startsWith(c))) return false;
+  return EXPENSIVE_MODELS.some((e) => m.startsWith(e));
 }
 
 export async function writeEnvFile(values: Record<string, string>): Promise<void> {

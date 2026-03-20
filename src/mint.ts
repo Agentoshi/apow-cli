@@ -80,6 +80,46 @@ export async function runMintFlow(): Promise<void> {
   const { account, walletClient } = requireWallet();
   console.log("");
 
+  // 1-rig-per-wallet enforcement
+  const existingBalance = (await publicClient.readContract({
+    address: config.miningAgentAddress,
+    abi: miningAgentAbi,
+    functionName: "balanceOf",
+    args: [account.address],
+  })) as bigint;
+
+  if (existingBalance > 0n) {
+    const tokenId = (await publicClient.readContract({
+      address: config.miningAgentAddress,
+      abi: miningAgentAbi,
+      functionName: "tokenOfOwnerByIndex",
+      args: [account.address, 0n],
+    })) as bigint;
+    const [rarityRaw, hashpowerRaw] = await Promise.all([
+      publicClient.readContract({
+        address: config.miningAgentAddress,
+        abi: miningAgentAbi,
+        functionName: "rarity",
+        args: [tokenId],
+      }) as Promise<bigint>,
+      publicClient.readContract({
+        address: config.miningAgentAddress,
+        abi: miningAgentAbi,
+        functionName: "hashpower",
+        args: [tokenId],
+      }) as Promise<bigint>,
+    ]);
+    const rarity = Number(rarityRaw);
+    const hashpower = Number(hashpowerRaw);
+    ui.error("This wallet already owns a mining rig.");
+    console.log(`  Rig #${tokenId} — ${rarityLabels[rarity] ?? `Tier ${rarity}`} (${formatHashpower(hashpower)})`);
+    console.log("");
+    ui.hint("One rig per wallet. Only one mine can succeed per block,");
+    ui.hint("so extra rigs in the same wallet waste ETH.");
+    ui.hint("To scale: apow wallet new → fund → apow mint");
+    return;
+  }
+
   // Fetch mint price and balance FIRST
   const priceSpinner = ui.spinner("Fetching mint price...");
   const [mintPrice, ethBalance] = await Promise.all([

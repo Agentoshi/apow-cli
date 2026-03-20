@@ -241,6 +241,8 @@ The default `https://mainnet.base.org` is rate-limited. For production mining, u
 
 ## 7. Step 4: Mint a Mining Rig
 
+**One rig per wallet.** The CLI enforces a one-rig-per-wallet rule. Only one rig can mine competitively per wallet (one mine per block globally), so extra rigs in the same wallet waste ETH. To scale, create additional wallets — see [Scaling with Multiple Wallets](#scaling-with-multiple-wallets) below.
+
 ```bash
 npx apow mint
 ```
@@ -365,41 +367,49 @@ npx apow stats <tokenId>  # stats for a specific rig
 
 **How mining competition works:** The protocol enforces exactly ONE successful mine per block, network-wide. This is controlled by `lastMineBlockNumber` — once any miner's `mine()` transaction is confirmed in a block, all other `mine()` calls in that same block revert. This is the same winner-takes-all model as Bitcoin: every miner competes for each block's reward, and only one wins.
 
-**Single wallet with multiple rigs:** If you own multiple Miner NFTs in the same wallet, you only need to mine with your best rig (highest hashpower). The CLI's `mine` command takes a single token ID — pick your highest-rarity rig. Running multiple rigs from the same wallet provides no advantage because only one `mine()` can succeed per block, and all your rigs share the same address.
+**One rig per wallet (CLI-enforced).** The CLI prevents minting more than one rig per wallet. Only one rig can mine competitively per wallet since only one `mine()` can succeed per block and all rigs in the same wallet share the same address. Extra rigs waste ETH on mint fees with no advantage.
 
-**Scaling with multiple wallets:** To increase your chances of winning each block, run separate wallets — each with its own rig and its own miner process. This is analogous to adding more hash rate in Bitcoin: more wallets = more independent chances to land the winning transaction in each block.
+### Scaling with Multiple Wallets
 
-```bash
-# Generate wallets
-npx apow wallet new  # → wallet A
-npx apow wallet new  # → wallet B
-npx apow wallet new  # → wallet C
+To increase your chances of winning each block, run separate wallets — each with its own rig and its own miner process. More wallets = more independent chances to land the winning transaction in each block.
 
-# Fund each wallet with ≥0.005 ETH, then mint a rig for each
-```
+**The user only funds one wallet.** Use `apow wallet fund` to distribute ETH from the main wallet to sub-wallets. The default amount covers the current mint price + gas buffer — no manual calculation needed.
 
-Run each miner with a different `.env` (or override via env vars):
+**Autonomous agent flow for multi-wallet mining:**
 
 ```bash
-# Terminal 1
-PRIVATE_KEY=0xWALLET_A_KEY npx apow mine 1
+# 1. Generate sub-wallets (main wallet is already configured in .env)
+npx apow wallet new   # → address A + key A
+npx apow wallet new   # → address B + key B
+npx apow wallet new   # → address C + key C
 
-# Terminal 2
-PRIVATE_KEY=0xWALLET_B_KEY npx apow mine 2
+# 2. Fund each sub-wallet from the main wallet (default: mint price + 0.003 ETH gas)
+npx apow wallet fund 0xADDRESS_A
+npx apow wallet fund 0xADDRESS_B
+npx apow wallet fund 0xADDRESS_C
+# Or specify a custom amount: npx apow wallet fund 0xADDRESS_A 0.01
 
-# Terminal 3
-PRIVATE_KEY=0xWALLET_C_KEY npx apow mine 3
+# 3. Mint a rig for each sub-wallet
+PRIVATE_KEY=0xKEY_A npx apow mint
+PRIVATE_KEY=0xKEY_B npx apow mint
+PRIVATE_KEY=0xKEY_C npx apow mint
+
+# 4. Mine with all wallets in parallel
+PRIVATE_KEY=0xKEY_A npx apow mine &
+PRIVATE_KEY=0xKEY_B npx apow mine &
+PRIVATE_KEY=0xKEY_C npx apow mine &
+wait
 ```
 
-Or use a process manager like PM2:
+Or use a process manager like PM2 for production:
 
 ```bash
 # ecosystem.config.cjs
 module.exports = {
   apps: [
-    { name: "miner-a", script: "npx", args: "apow mine 1", env: { PRIVATE_KEY: "0xKEY_A" } },
-    { name: "miner-b", script: "npx", args: "apow mine 2", env: { PRIVATE_KEY: "0xKEY_B" } },
-    { name: "miner-c", script: "npx", args: "apow mine 3", env: { PRIVATE_KEY: "0xKEY_C" } },
+    { name: "miner-a", script: "npx", args: "apow mine", env: { PRIVATE_KEY: "0xKEY_A" } },
+    { name: "miner-b", script: "npx", args: "apow mine", env: { PRIVATE_KEY: "0xKEY_B" } },
+    { name: "miner-c", script: "npx", args: "apow mine", env: { PRIVATE_KEY: "0xKEY_C" } },
   ]
 };
 
@@ -408,6 +418,8 @@ pm2 logs
 ```
 
 **Economics of multi-wallet mining:** Failed `mine()` calls still cost gas (~0.001 ETH). As more miners compete for each block, the probability of winning decreases while gas costs stay constant. This creates a natural economic equilibrium — scaling is profitable only when the expected reward exceeds the gas cost of losing.
+
+**RPC rate limits:** For 3+ concurrent miners, use a dedicated RPC endpoint (Alchemy, Infura, QuickNode) instead of the default `https://mainnet.base.org`.
 
 ### Local LLM Setup (Ollama)
 
