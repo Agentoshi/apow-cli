@@ -545,9 +545,9 @@ Use the corresponding testnet contract addresses.
 
 | Contract | Address |
 |---|---|
-| MiningAgent (ERC-721) | TBD |
-| AgentCoin (ERC-20) | TBD |
-| LPVault | TBD |
+| MiningAgent (ERC-721) | `0xB7caD3ca5F2BD8aEC2Eb67d6E8D448099B3bC03D` |
+| AgentCoin (ERC-20) | `0x12577CF0D8a07363224D6909c54C056A183e13b3` |
+| LPVault | `0xDD47511d060eA4E955B95F6f43553414328648a6` |
 
 **Network:** Base (Chain ID 8453)
 
