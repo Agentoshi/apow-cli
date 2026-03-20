@@ -53,6 +53,8 @@ npx apow-cli wallet new
 # Captures address + private key from output (also saved to wallet-<address>.txt)
 
 # 2. Write .env directly (no interactive prompts needed)
+#    IMPORTANT: Use an API-based provider (openai/anthropic/gemini), NOT claude-code/codex.
+#    Session-based providers are too slow for the 20-second mint challenge window.
 cat > .env << 'EOF'
 PRIVATE_KEY=0x<from step 1>
 RPC_URL=https://mainnet.base.org
@@ -237,15 +239,17 @@ CHAIN=base
 
 ### LLM Provider Recommendations
 
+> **For AI agents:** Always use an API-based provider (OpenAI, Anthropic, or Gemini). Session-based providers (`claude-code`, `codex`) spawn a CLI subprocess to solve challenges and are too slow to reliably complete the 20-second mint window. They may work for mining (which has no time limit) but will frequently fail during minting.
+
 | Provider | Model | Cost per call | Notes |
 |---|---|---|---|
-| OpenAI | `gpt-4o-mini` | ~$0.001 | Cheapest cloud option |
-| OpenAI | `gpt-4o` | ~$0.005 | Default; good reliability |
-| Anthropic | `claude-sonnet-4-5-20250929` | ~$0.005 | High accuracy on constrained generation |
-| Ollama | `llama3.1` | Free (local) | Requires local GPU; variable accuracy |
+| OpenAI | `gpt-4o-mini` | ~$0.001 | **Recommended for agents.** Cheapest, fastest, reliable |
 | Gemini | `gemini-2.5-flash` | ~$0.001 | Fast, good accuracy |
-| Claude Code | `default` | Subscription | Use your existing Claude Code session — no API key needed |
-| Codex | `default` | Subscription | Use your existing Codex session — no API key needed |
+| Anthropic | `claude-sonnet-4-5-20250929` | ~$0.005 | High accuracy on constrained generation |
+| OpenAI | `gpt-4o` | ~$0.005 | Higher quality, slightly slower |
+| Ollama | `llama3.1` | Free (local) | Requires local GPU; variable accuracy |
+| Claude Code | `default` | Subscription | **Not recommended for minting** — CLI startup too slow for 20s window |
+| Codex | `default` | Subscription | **Not recommended for minting** — CLI startup too slow for 20s window |
 
 ### RPC Recommendations
 
@@ -272,7 +276,7 @@ npx apow-cli mint
 5. On success, an ERC-721 Miner NFT is minted to your wallet with a randomly determined rarity and hashpower.
 6. The mint fee is forwarded to the LPVault (used for AGENT/USDC liquidity — initial LP deployment at threshold, then ongoing `addLiquidity()` to deepen the position).
 
-**Challenge expiry:** 20 seconds from `getChallenge` to `mint`. The LLM must solve quickly.
+**Challenge expiry:** 20 seconds from `getChallenge` to `mint`. The LLM must solve quickly. Use an API-based provider (openai/anthropic/gemini) — session-based providers (claude-code/codex) are too slow and will fail.
 
 ### Mint Price
 
@@ -479,7 +483,7 @@ LLM_PROVIDER=codex
 - The CLI must be available in your PATH
 - Your subscription must be active
 
-**Trade-off:** Session-based solving may be slightly slower than direct API calls due to CLI startup overhead, but eliminates the need for separate API keys and billing. The 15-second timeout ensures challenges are still submitted within the contract's 20-second window.
+**Warning:** Session-based providers (`claude-code`, `codex`) spawn a CLI subprocess for each SMHL challenge. The startup overhead frequently exceeds the 20-second mint challenge window, causing mints to fail with `Expired`. **For minting, always use an API-based provider** (openai, anthropic, or gemini). Session providers may work for the mining loop (which has no time limit per challenge) but are unreliable and not recommended for autonomous operation.
 
 ### Custom RPC Endpoints
 
@@ -522,7 +526,7 @@ Use the corresponding testnet contract addresses.
 | `LLM_API_KEY is required for openai.` | Missing API key for cloud provider | Set `LLM_API_KEY` (or provider-specific key like `OPENAI_API_KEY`) in `.env`, or switch to `ollama` |
 | `Insufficient fee` | Not enough ETH sent with mint | Check `getMintPrice()` and ensure wallet has enough ETH |
 | `Sold out` | All 10,000 Miner NFTs minted | No more rigs available; buy one on secondary market |
-| `Expired` | SMHL challenge expired (>20s) | Your LLM is too slow; use a faster model or provider |
+| `Expired` | SMHL challenge expired (>20s) | Switch to an API-based provider (openai/gemini/anthropic). Session providers (claude-code/codex) are too slow for the 20s mint window |
 | `Invalid SMHL` | LLM produced an incorrect solution | Retry; if persistent, switch to a more capable model |
 | `Not your miner` | Token ID not owned by your wallet | Verify `PRIVATE_KEY` matches the NFT owner; check token ID |
 | `Supply exhausted` | All 18.9M mineable AGENT has been minted | Mining is complete; no more rewards available |
