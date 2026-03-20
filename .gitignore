@@ -1,0 +1,19 @@
+# Env
+.env
+.env.*
+!.env.example
+
+# Node
+node_modules/
+dist/
+
+# OS
+.DS_Store
+
+# IDE
+.claude/
+
+# Test files (kept locally, not in repo)
+smhl-local-test.ts
+stress-test.ts
+testnet-llm-test.ts

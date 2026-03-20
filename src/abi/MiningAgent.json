@@ -1,0 +1,186 @@
+[
+  {
+    "type": "function",
+    "name": "getChallenge",
+    "stateMutability": "nonpayable",
+    "inputs": [
+      {
+        "name": "minter",
+        "type": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "components": [
+          { "name": "targetAsciiSum", "type": "uint16" },
+          { "name": "firstNChars", "type": "uint8" },
+          { "name": "wordCount", "type": "uint8" },
+          { "name": "charPosition", "type": "uint8" },
+          { "name": "charValue", "type": "uint8" },
+          { "name": "totalLength", "type": "uint16" }
+        ]
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "challengeSeeds",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "",
+        "type": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "mint",
+    "stateMutability": "payable",
+    "inputs": [
+      {
+        "name": "solution",
+        "type": "string"
+      }
+    ],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "getMintPrice",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "hashpower",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "rarity",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "mintBlock",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "ownerOf",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "tokenId",
+        "type": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "nextTokenId",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "balanceOf",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "tokenOfOwnerByIndex",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address"
+      },
+      {
+        "name": "index",
+        "type": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  }
+]

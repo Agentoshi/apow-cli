@@ -1,0 +1,42 @@
+{
+  "name": "apow",
+  "version": "0.1.0",
+  "description": "Mine AGENT tokens on Base L2 with AI-powered proof of work",
+  "keywords": ["apow", "agentcoin", "mining", "base", "l2", "proof-of-work", "ai", "crypto"],
+  "license": "MIT",
+  "author": "Agentoshi",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Agentoshi/apow-cli.git"
+  },
+  "homepage": "https://github.com/Agentoshi/apow-cli",
+  "bin": {
+    "apow": "./dist/index.js"
+  },
+  "engines": {
+    "node": ">=18.17.0"
+  },
+  "files": [
+    "dist",
+    "skill.md",
+    ".env.example",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "commander": "^14.0.0",
+    "dotenv": "^17.2.3",
+    "openai": "^6.6.0",
+    "viem": "^2.38.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.3"
+  }
+}

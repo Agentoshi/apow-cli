@@ -1,0 +1,173 @@
+[
+  {
+    "type": "function",
+    "name": "getMiningChallenge",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "challenge",
+        "type": "bytes32"
+      },
+      {
+        "name": "target",
+        "type": "uint256"
+      },
+      {
+        "name": "smhl",
+        "type": "tuple",
+        "components": [
+          { "name": "targetAsciiSum", "type": "uint16" },
+          { "name": "firstNChars", "type": "uint8" },
+          { "name": "wordCount", "type": "uint8" },
+          { "name": "charPosition", "type": "uint8" },
+          { "name": "charValue", "type": "uint8" },
+          { "name": "totalLength", "type": "uint16" }
+        ]
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "mine",
+    "stateMutability": "nonpayable",
+    "inputs": [
+      {
+        "name": "nonce",
+        "type": "uint256"
+      },
+      {
+        "name": "smhlSolution",
+        "type": "string"
+      },
+      {
+        "name": "tokenId",
+        "type": "uint256"
+      }
+    ],
+    "outputs": []
+  },
+  {
+    "type": "function",
+    "name": "totalMines",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "totalMinted",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "miningTarget",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "tokenMineCount",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "tokenEarnings",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "balanceOf",
+    "stateMutability": "view",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "lastMineBlockNumber",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "MINEABLE_SUPPLY",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "function",
+    "name": "ERA_INTERVAL",
+    "stateMutability": "view",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ]
+  }
+]

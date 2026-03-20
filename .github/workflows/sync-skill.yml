@@ -1,0 +1,24 @@
+name: Sync skill.md to website
+
+on:
+  push:
+    branches: [main]
+    paths: [skill.md]
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Push skill.md to apow-website
+        uses: dmnemec/copy_file_to_another_repo_action@main
+        env:
+          API_TOKEN_GITHUB: ${{ secrets.AGENTOSHI_PAT }}
+        with:
+          source_file: skill.md
+          destination_repo: Agentoshi/apow-website
+          destination_folder: public
+          user_email: agentoshi@users.noreply.github.com
+          user_name: Agentoshi
+          commit_message: "sync skill.md from apow-cli"
