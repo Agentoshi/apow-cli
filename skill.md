@@ -30,6 +30,7 @@ with ETH on Base. Everything else you handle yourself.
 **Via npm (recommended):**
 ```bash
 npx apow-cli setup     # interactive wizard — wallet, RPC, LLM config
+npx apow-cli fund      # fund wallet — bridge from Solana or show deposit address
 npx apow-cli mint      # mint a mining rig NFT
 npx apow-cli mine      # start mining (auto-detects your best rig)
 ```
@@ -65,8 +66,10 @@ MINING_AGENT_ADDRESS=0xB7caD3ca5F2BD8aEC2Eb67d6E8D448099B3bC03D
 AGENT_COIN_ADDRESS=0x12577CF0D8a07363224D6909c54C056A183e13b3
 EOF
 
-# 3. Ask your user to fund the wallet with ≥0.005 ETH on Base
-#    This is the ONLY step that requires human action
+# 3. Fund the wallet (bridge from Solana or send ETH on Base)
+npx apow-cli fund --solana            # interactive bridge SOL → ETH on Base
+# Or: npx apow-cli fund --solana --key <base58>  # direct signing (~20s)
+# Or: ask your user to send ≥0.005 ETH on Base directly
 
 # 4. Mint + mine (fully autonomous from here)
 npx apow-cli mint
@@ -138,9 +141,34 @@ This prompts for confirmation, then displays your address and private key. It al
 Your mining wallet needs ETH on Base for gas and the mint fee.
 **Minimum:** 0.005 ETH (~$15) covers minting + several mining cycles.
 
-Ask your user how they want to fund their wallet, then give them the appropriate instructions:
+### Built-in Bridge: `apow fund` (Recommended)
 
-### From Solana (Phantom Wallet)
+The CLI has a built-in cross-chain bridge for Solana users:
+
+```bash
+npx apow-cli fund                           # Interactive: choose funding method
+npx apow-cli fund --solana                  # Deposit address + QR code
+npx apow-cli fund --solana --key <base58>   # Direct Solana signing (~20s)
+npx apow-cli fund --solana --amount 0.01    # Custom ETH target
+```
+
+**Three funding paths:**
+
+| Path | How it works | Speed | Requires Solana key? |
+|------|-------------|-------|---------------------|
+| Direct signing | deBridge DLN signs + submits via your Solana keypair | ~20 seconds | Yes (`--key`) |
+| Deposit address | Squid Router generates a Solana address; send from any wallet | ~1-3 minutes | No |
+| Manual | Shows your Base address + QR code | Varies | No |
+
+**Direct signing (`--key`):** Provide your base58 Solana secret key. The CLI calls deBridge DLN to create a bridge order, signs the Solana transaction locally, submits it, and polls until ETH arrives on Base. No API key needed.
+
+**Deposit address (`--solana` without `--key`):** Requires `SQUID_INTEGRATOR_ID` in `.env` (free, apply at [squidrouter.com](https://app.squidrouter.com/)). Generates a one-time Solana deposit address with a QR code. Send SOL from any wallet (Phantom, Backpack, etc.) and the bridge handles the rest.
+
+### Manual Funding Options
+
+If you prefer not to use the built-in bridge:
+
+#### From Solana (Phantom Wallet)
 Phantom natively supports Base. Tell your user:
 1. Open Phantom → tap the **Swap** icon
 2. Set **From:** SOL (Solana) → **To:** ETH (Base)
@@ -149,19 +177,17 @@ Phantom natively supports Base. Tell your user:
 5. Once ETH arrives on Base, tap **Send** → paste the mining wallet address
 6. Confirm the transfer
 
-Alternatively, use [relay.link/bridge/solana](https://relay.link/bridge/solana) to bridge SOL → ETH on Base directly to the mining wallet address.
-
-### From an Exchange (Coinbase, Binance, etc.)
+#### From an Exchange (Coinbase, Binance, etc.)
 1. Buy ETH on Base (Coinbase supports Base withdrawals natively)
 2. Withdraw to the mining wallet address
 3. Select **Base** as the network — do NOT send on Ethereum mainnet
 
-### From Ethereum Mainnet
+#### From Ethereum Mainnet
 Bridge ETH to Base via [bridge.base.org](https://bridge.base.org):
 1. Connect source wallet → enter mining wallet address as recipient
 2. Bridge ≥0.005 ETH → arrives on Base in ~10 minutes
 
-### From Another Base Wallet
+#### From Another Base Wallet
 Send ETH directly to the mining wallet address on Base.
 
 ### Verifying Funds
@@ -236,6 +262,8 @@ CHAIN=base
 | `LLM_MODEL` | No | `gpt-4o-mini` | Model identifier passed to the provider |
 | `RPC_URL` | No | `https://mainnet.base.org` | Base JSON-RPC endpoint |
 | `CHAIN` | No | `base` | Network selector; auto-detects `baseSepolia` if RPC URL contains "sepolia" |
+| `SOLANA_RPC_URL` | No | `https://api.mainnet-beta.solana.com` | Solana RPC endpoint (only for `apow fund --solana`) |
+| `SQUID_INTEGRATOR_ID` | No | -- | Squid Router integrator ID for deposit address flow (free at [squidrouter.com](https://app.squidrouter.com/)) |
 
 ### LLM Provider Recommendations
 
@@ -253,10 +281,54 @@ CHAIN=base
 
 ### RPC Recommendations
 
-The default `https://mainnet.base.org` is rate-limited. For production mining, use a dedicated RPC:
-- [Alchemy](https://www.alchemy.com/) -- `https://base-mainnet.g.alchemy.com/v2/YOUR_KEY`
-- [Infura](https://infura.io/) -- `https://base-mainnet.infura.io/v3/YOUR_KEY`
-- [QuickNode](https://www.quicknode.com/) -- custom endpoint
+The default `https://mainnet.base.org` is a public RPC with aggressive rate limits. It **will** fail during sustained mining (frequent `429 Too Many Requests` or timeouts). You need a dedicated RPC endpoint. All providers below offer a **free tier** that is more than sufficient for mining.
+
+#### Option 1: Alchemy (Recommended)
+
+1. Go to [alchemy.com](https://www.alchemy.com/) and sign up (free, no credit card)
+2. Click **Create new app** → Name: `apow-miner` → Chain: **Base** → Network: **Base Mainnet**
+3. On the app dashboard, copy the **HTTPS** URL. It looks like:
+   ```
+   https://base-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+   ```
+4. Set in your `.env`:
+   ```
+   RPC_URL=https://base-mainnet.g.alchemy.com/v2/YOUR_API_KEY
+   ```
+
+**Free tier:** 300M compute units/month (~millions of RPC calls). More than enough for mining.
+
+#### Option 2: QuickNode
+
+1. Go to [quicknode.com](https://www.quicknode.com/) and sign up (free, no credit card)
+2. Click **Create Endpoint** → Chain: **Base** → Network: **Mainnet**
+3. Copy the **HTTP Provider** URL. It looks like:
+   ```
+   https://something-something.base-mainnet.quiknode.pro/YOUR_TOKEN/
+   ```
+4. Set in your `.env`:
+   ```
+   RPC_URL=https://something-something.base-mainnet.quiknode.pro/YOUR_TOKEN/
+   ```
+
+**Free tier:** 10M API credits/month. Sufficient for a few miners.
+
+#### Option 3: Other Free RPCs
+
+| Provider | Free Tier | URL Pattern |
+|---|---|---|
+| [Infura](https://infura.io/) | 100K req/day | `https://base-mainnet.infura.io/v3/KEY` |
+| [Ankr](https://www.ankr.com/) | 30 req/s | `https://rpc.ankr.com/base` (no key needed) |
+| [Blast](https://blastapi.io/) | 40 req/s | `https://base-mainnet.blastapi.io/KEY` |
+
+#### Troubleshooting RPC Issues
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `429 Too Many Requests` | Public RPC rate limit | Switch to a dedicated RPC (Alchemy/QuickNode) |
+| `Timed out waiting for next block (60s)` | RPC not responding | Check endpoint URL; try a different provider |
+| `fetch failed` / `ECONNREFUSED` | RPC URL is wrong or down | Verify URL; test with `curl YOUR_RPC_URL -X POST -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}'` |
+| Stale data / missed mines | RPC caching or slow sync | Alchemy and QuickNode are fastest; avoid free community RPCs |
 
 ---
 
@@ -565,12 +637,17 @@ The CLI contains no analytics, no error reporting, and no phone-home behavior of
 - No error reporting services (no Sentry, no Bugsnag)
 - No tracking pixels, no usage metrics, no telemetry endpoints
 
-The CLI makes exactly two types of network calls:
+The CLI makes only these network calls:
 
 1. **Blockchain RPC** (to user-configured RPC URL, default: `mainnet.base.org`) -- standard `eth_call`, `eth_sendRawTransaction`, etc.
 2. **LLM API** (to user-configured provider) -- sends only word-puzzle prompts for SMHL solving, never wallet data
+3. **Bridge APIs** (only when using `apow fund --solana`):
+   - **CoinGecko** (`api.coingecko.com`) -- SOL/ETH price quotes
+   - **deBridge DLN** (`dln.debridge.finance`) -- bridge order creation and status (direct signing flow)
+   - **Squid Router** (`v2.api.squidrouter.com`) -- deposit address generation (deposit address flow)
+   - **Solana RPC** (`api.mainnet-beta.solana.com` or custom) -- balance checks and tx submission
 
-Nothing else. No other outbound connections.
+No private keys are transmitted to bridge providers. deBridge returns a serialized Solana transaction that is signed locally. Squid generates a deposit address -- the user sends SOL themselves.
 
 ### LLM Calls Are Data-Isolated
 
@@ -601,7 +678,7 @@ The SMHL solver sends only generic word-generation prompts to the LLM (e.g., "Wr
    cd apow-cli && npm install && npm run build
    node dist/index.js setup
    ```
-5. **Review dependencies.** The dependency tree is minimal and standard: `viem` (Ethereum library), `commander` (CLI framework), `dotenv` (env loading), `chalk`/`ora` (terminal UI), and an LLM client. No exotic or suspicious packages.
+5. **Review dependencies.** The dependency tree is minimal and standard: `viem` (Ethereum library), `commander` (CLI framework), `dotenv` (env loading), `@solana/web3.js` (Solana signing, lazy-loaded only for bridging), `qrcode-terminal` (QR codes for fund command), and an LLM client. No exotic or suspicious packages.
 
 ### How to Verify These Claims Yourself
 

@@ -20,3 +20,6 @@ wallet-*.txt
 smhl-local-test.ts
 stress-test.ts
 testnet-llm-test.ts
+
+# Local-only tools (never commit)
+local/

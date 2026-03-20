@@ -278,7 +278,7 @@ async function requestGeminiSolution(prompt: string): Promise<string> {
           parts: [{ text: "You generate short lowercase word sequences that match exact constraints. Return only the words separated by spaces. Nothing else." }],
         },
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.7 },
+        generationConfig: { temperature: 0.7, thinkingConfig: { thinkingBudget: 0 } },
       }),
     },
   );

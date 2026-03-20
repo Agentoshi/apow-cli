@@ -34,8 +34,9 @@ LLM_MODEL=gpt-4o-mini
 LLM_API_KEY=<your key>
 EOF
 
-# 3. Ask your user to fund the wallet with ≥0.005 ETH on Base
-#    This is the ONLY step that requires human action
+# 3. Fund the wallet (bridge from Solana or send ETH on Base)
+npx apow-cli fund --solana            # bridge SOL → ETH on Base
+# Or ask your user to send ≥0.005 ETH on Base directly
 
 # 4. Mint a mining rig NFT (solves SMHL challenge via LLM)
 npx apow-cli mint
@@ -66,7 +67,8 @@ If you prefer to do it yourself:
 # 1. Interactive setup — wallet, RPC, LLM config
 npx apow-cli setup
 
-# 2. Fund your wallet with ETH on Base (≥0.005 ETH)
+# 2. Fund your wallet (bridge from Solana or send ETH directly)
+npx apow-cli fund
 
 # 3. Mint a mining rig NFT
 npx apow-cli mint
@@ -80,6 +82,7 @@ npx apow-cli mine
 | Command | Description |
 |---------|-------------|
 | `apow setup` | Interactive setup wizard — configure wallet, RPC, and LLM |
+| `apow fund` | Fund your wallet — bridge SOL → ETH on Base, or show deposit address |
 | `apow wallet new` | Generate a new mining wallet |
 | `apow wallet show` | Show configured wallet address |
 | `apow wallet export` | Export your wallet's private key |
@@ -98,6 +101,9 @@ RPC_URL=https://mainnet.base.org
 LLM_PROVIDER=openai            # openai | anthropic | gemini | ollama | claude-code | codex
 LLM_MODEL=gpt-4o-mini
 LLM_API_KEY=sk-...
+# Solana bridging (only for `apow fund --solana`)
+# SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
+# SQUID_INTEGRATOR_ID=          # free, get at squidrouter.com (deposit address flow only)
 # Contract addresses (defaults built-in, override only if needed)
 # MINING_AGENT_ADDRESS=0xB7caD3ca5F2BD8aEC2Eb67d6E8D448099B3bC03D
 # AGENT_COIN_ADDRESS=0x12577CF0D8a07363224D6909c54C056A183e13b3

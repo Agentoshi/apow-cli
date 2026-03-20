@@ -11,6 +11,7 @@ import miningAgentAbiJson from "./abi/MiningAgent.json";
 import { config, isExpensiveModel, writeEnvFile, type LlmProvider } from "./config";
 import { detectMiners, formatHashpower, selectBestMiner } from "./detect";
 import { txUrl } from "./explorer";
+import { runFundFlow } from "./fund";
 import { runMintFlow } from "./mint";
 import { startMining } from "./miner";
 import { runPreflight } from "./preflight";
@@ -260,6 +261,19 @@ async function main(): Promise<void> {
     .description("Interactive setup wizard — configure wallet, RPC, and LLM")
     .action(async () => {
       await setupWizard();
+    });
+
+  program
+    .command("fund")
+    .description("Fund your wallet — bridge SOL → ETH on Base, or show deposit address")
+    .option("--solana", "Bridge from Solana")
+    .option("--key <base58>", "Solana private key for direct signing")
+    .option("--amount <eth>", "Target ETH amount (default: 0.005)")
+    .hook("preAction", async () => {
+      await runPreflight("readonly");
+    })
+    .action(async (opts: { solana?: boolean; key?: string; amount?: string }) => {
+      await runFundFlow(opts);
     });
 
   program
