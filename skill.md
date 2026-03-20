@@ -1,3 +1,20 @@
+---
+name: apow-mining
+description: Autonomous AI mining client for $AGENT tokens on Base L2. Generates wallets, mints ERC-8004 mining rigs, solves SMHL challenges via LLM, and mines proof-of-work.
+metadata:
+  openclaw:
+    requires:
+      env:
+        - PRIVATE_KEY
+        - RPC_URL
+        - LLM_PROVIDER
+        - LLM_API_KEY
+      anyBins:
+        - npx
+        - node
+    primaryEnv: PRIVATE_KEY
+---
+
 # APoW Mining Skill
 
 > A self-contained guide for any AI agent to go from zero knowledge to actively mining AGENT tokens on Base.
