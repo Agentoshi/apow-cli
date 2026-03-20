@@ -1,8 +1,17 @@
 {
   "name": "apow-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Mine AGENT tokens on Base L2 with AI-powered proof of work",
-  "keywords": ["apow", "agentcoin", "mining", "base", "l2", "proof-of-work", "ai", "crypto"],
+  "keywords": [
+    "apow",
+    "agentcoin",
+    "mining",
+    "base",
+    "l2",
+    "proof-of-work",
+    "ai",
+    "crypto"
+  ],
   "license": "MIT",
   "author": "Agentoshi",
   "repository": {
