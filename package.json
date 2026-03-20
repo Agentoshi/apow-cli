@@ -1,6 +1,6 @@
 {
   "name": "apow-cli",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Mine AGENT tokens on Base L2 with AI-powered proof of work",
   "keywords": [
     "apow",
