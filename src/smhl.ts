@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { exec, execFile } from "node:child_process";
 import OpenAI from "openai";
 
 import { config, requireLlmApiKey } from "./config";
@@ -40,16 +40,25 @@ export function normalizeSmhlChallenge(raw: unknown): SmhlChallenge {
   throw new Error("Unable to normalize SMHL challenge.");
 }
 
-export function buildSmhlPrompt(challenge: SmhlChallenge): string {
+export function buildSmhlPrompt(challenge: SmhlChallenge, feedback?: string): string {
   const requiredChar = String.fromCharCode(challenge.charValue);
-  const minLen = challenge.totalLength - 5;
-  const maxLen = challenge.totalLength + 5;
+  const spaces = Math.max(0, challenge.wordCount - 1);
+  const avgWordLen = Math.round((challenge.totalLength - spaces) / challenge.wordCount);
+  const minWordLen = Math.max(2, avgWordLen - 2);
+  const maxWordLen = avgWordLen + 2;
 
-  return [
-    `Write a sentence between ${minLen} and ${maxLen} characters long (including spaces) with about ${challenge.wordCount} words.`,
-    `It must contain the letter '${requiredChar}'.`,
-    `Output ONLY the sentence. No quotes, no explanation.`,
-  ].join("\n");
+  const lines = [
+    `Write exactly ${challenge.wordCount} lowercase English words separated by single spaces.`,
+    `Each word should be ${minWordLen} to ${maxWordLen} letters long.`,
+    `At least one word must contain the letter '${requiredChar}'.`,
+    `No punctuation, no quotes, no explanation — just the words.`,
+  ];
+
+  if (feedback) {
+    lines.push("", `Previous attempt was rejected: ${feedback}. Try completely different words.`);
+  }
+
+  return lines.join("\n");
 }
 
 export function validateSmhlSolution(solution: string, challenge: SmhlChallenge): string[] {
@@ -82,6 +91,74 @@ export function validateSmhlSolution(solution: string, challenge: SmhlChallenge)
   return issues;
 }
 
+/**
+ * Post-process LLM output to fit within SMHL constraints.
+ * The LLM generates roughly-correct text; this adjusts length, word count,
+ * and ensures the required character is present.
+ */
+function adjustSolution(raw: string, challenge: SmhlChallenge): string {
+  const requiredChar = String.fromCharCode(challenge.charValue);
+  const minLen = challenge.totalLength - 5;
+  const maxLen = challenge.totalLength + 5;
+  const maxWords = challenge.wordCount + 2;
+
+  // Clean: lowercase, letters and spaces only, collapse whitespace
+  let words = raw
+    .toLowerCase()
+    .replace(/[^a-z ]/g, "")
+    .split(/\s+/)
+    .filter((w) => w.length > 0);
+
+  if (words.length === 0) return raw;
+
+  // Trim excess words (prefer keeping words with the required char)
+  while (words.length > maxWords) {
+    let removeIdx = -1;
+    for (let i = words.length - 1; i >= 0; i--) {
+      if (!words[i].includes(requiredChar)) { removeIdx = i; break; }
+    }
+    words.splice(removeIdx >= 0 ? removeIdx : words.length - 1, 1);
+  }
+
+  let result = words.join(" ");
+  let len = Buffer.byteLength(result, "utf8");
+
+  // Too long: trim at word boundary, then trim characters
+  if (len > maxLen) {
+    result = result.slice(0, maxLen);
+    const lastSpace = result.lastIndexOf(" ");
+    if (lastSpace >= minLen) result = result.slice(0, lastSpace);
+    words = result.split(" ").filter(Boolean);
+    len = Buffer.byteLength(result, "utf8");
+  }
+
+  // Too short: add filler words
+  const fillers = ["and", "the", "not", "can", "run", "now", "old", "new"];
+  let fi = 0;
+  while (len < minLen && words.length < maxWords) {
+    words.push(fillers[fi % fillers.length]);
+    result = words.join(" ");
+    len = Buffer.byteLength(result, "utf8");
+    fi++;
+  }
+
+  // Still too short but can't add more words: extend last word
+  while (len < minLen && words.length > 0) {
+    words[words.length - 1] += "s";
+    result = words.join(" ");
+    len = Buffer.byteLength(result, "utf8");
+  }
+
+  // Ensure required char is present
+  if (!result.includes(requiredChar)) {
+    const last = words[words.length - 1];
+    words[words.length - 1] = last.slice(0, -1) + requiredChar;
+    result = words.join(" ");
+  }
+
+  return result;
+}
+
 function sanitizeResponse(text: string): string {
   let cleaned = text.replace(/\r/g, "").trim();
 
@@ -104,12 +181,12 @@ async function requestOpenAiSolution(prompt: string): Promise<string> {
   const client = new OpenAI({ apiKey: requireLlmApiKey() });
   const response = await client.chat.completions.create({
     model: config.llmModel,
-    temperature: 0,
+    temperature: 0.7,
     messages: [
       {
         role: "system",
         content:
-          "You solve constrained ASCII string generation tasks. Return only the exact string requested.",
+          "You generate short lowercase word sequences that match exact constraints. Return only the words separated by spaces. Nothing else.",
       },
       { role: "user", content: prompt },
     ],
@@ -130,9 +207,9 @@ async function requestAnthropicSolution(prompt: string): Promise<string> {
     body: JSON.stringify({
       model: config.llmModel,
       max_tokens: 200,
-      temperature: 0,
+      temperature: 0.7,
       system:
-        "You solve constrained ASCII string generation tasks. Return only the exact string requested.",
+        "You generate short lowercase word sequences that match exact constraints. Return only the words separated by spaces. Nothing else.",
       messages: [{ role: "user", content: prompt }],
     }),
   });
@@ -163,13 +240,13 @@ async function requestOllamaSolution(prompt: string): Promise<string> {
     body: JSON.stringify({
       model: config.llmModel,
       prompt: [
-        "You solve constrained ASCII string generation tasks.",
-        "Return only the exact string requested.",
+        "You generate short lowercase word sequences that match exact constraints.",
+        "Return only the words separated by spaces. Nothing else.",
         "",
         prompt,
       ].join("\n"),
       stream: false,
-      options: { temperature: 0 },
+      options: { temperature: 0.7 },
     }),
   });
 
@@ -198,10 +275,10 @@ async function requestGeminiSolution(prompt: string): Promise<string> {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         systemInstruction: {
-          parts: [{ text: "You solve constrained ASCII string generation tasks. Return only the exact string requested." }],
+          parts: [{ text: "You generate short lowercase word sequences that match exact constraints. Return only the words separated by spaces. Nothing else." }],
         },
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0 },
+        generationConfig: { temperature: 0.7 },
       }),
     },
   );
@@ -226,9 +303,10 @@ async function requestGeminiSolution(prompt: string): Promise<string> {
 
 async function requestClaudeCodeSolution(prompt: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("claude", ["-p", prompt, "--no-input"], { timeout: 15_000 }, (error, stdout, stderr) => {
+    const escaped = prompt.replace(/'/g, "'\\''");
+    exec(`claude -p '${escaped}'`, { timeout: 120_000 }, (error, stdout, stderr) => {
       if (error) {
-        reject(new Error(`Claude Code error: ${error.message}`));
+        reject(new Error(`Claude Code error: ${error.message}${stderr ? `\nstderr: ${stderr}` : ""}${stdout ? `\nstdout: ${stdout}` : ""}`));
         return;
       }
       resolve(stdout.trim());
@@ -270,21 +348,31 @@ export async function solveSmhlChallenge(
   challenge: SmhlChallenge,
   onAttempt?: (attempt: number) => void,
 ): Promise<string> {
-  const prompt = buildSmhlPrompt(challenge);
+  let feedback: string | undefined;
   let lastIssues = "provider did not return a valid response";
 
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
     if (onAttempt) onAttempt(attempt);
-    const raw = await requestProviderSolution(prompt);
-    const candidate = sanitizeResponse(raw);
-    const issues = validateSmhlSolution(candidate, challenge);
 
-    if (issues.length === 0) {
-      return candidate;
+    try {
+      const prompt = buildSmhlPrompt(challenge, feedback);
+      const raw = await requestProviderSolution(prompt);
+      const sanitized = sanitizeResponse(raw);
+      const adjusted = adjustSolution(sanitized, challenge);
+      const issues = validateSmhlSolution(adjusted, challenge);
+
+      if (issues.length === 0) {
+        return adjusted;
+      }
+
+      feedback = issues.join(", ");
+      lastIssues = `attempt ${attempt}: ${feedback}`;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      feedback = msg;
+      lastIssues = `attempt ${attempt}: ${msg}`;
     }
-
-    lastIssues = `attempt ${attempt}: ${issues.join(", ")}`;
   }
 
-  throw new Error(`SMHL solve failed after 3 attempts: ${lastIssues}`);
+  throw new Error(`SMHL solve failed after 5 attempts: ${lastIssues}`);
 }

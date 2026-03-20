@@ -183,7 +183,7 @@ export async function runMintFlow(): Promise<void> {
   const challenge = deriveChallengeFromSeed(challengeSeed);
   const smhlSpinner = ui.spinner("Solving SMHL...");
   const solution = await solveSmhlChallenge(challenge, (attempt) => {
-    smhlSpinner.update(`Solving SMHL... attempt ${attempt}/3`);
+    smhlSpinner.update(`Solving SMHL... attempt ${attempt}/5`);
   });
   smhlSpinner.stop("Solving SMHL... done");
 

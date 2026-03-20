@@ -1,5 +1,5 @@
 {
-  "name": "apow",
+  "name": "apow-cli",
   "version": "0.1.0",
   "description": "Mine AGENT tokens on Base L2 with AI-powered proof of work",
   "keywords": ["apow", "agentcoin", "mining", "base", "l2", "proof-of-work", "ai", "crypto"],
@@ -11,7 +11,8 @@
   },
   "homepage": "https://github.com/Agentoshi/apow-cli",
   "bin": {
-    "apow": "./dist/index.js"
+    "apow": "dist/index.js",
+    "apow-cli": "dist/index.js"
   },
   "engines": {
     "node": ">=18.17.0"

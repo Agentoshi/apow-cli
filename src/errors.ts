@@ -89,7 +89,7 @@ const patterns: Array<{
     test: (m) => m.includes("SMHL solve failed"),
     classify: () => ({
       category: "llm",
-      userMessage: "LLM failed to solve the SMHL challenge after 3 attempts",
+      userMessage: "LLM failed to solve the SMHL challenge after 5 attempts",
       recovery: "Try a different model (gpt-4o-mini recommended) or check your LLM API key",
     }),
   },

@@ -29,9 +29,8 @@ const DEFAULT_LLM_PROVIDER: LlmProvider = "openai";
 const DEFAULT_LLM_MODEL = "gpt-4o-mini";
 const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 const DEFAULT_CHAIN_NAME: ChainName = "base";
-// Set via MINING_AGENT_ADDRESS and AGENT_COIN_ADDRESS env vars after mainnet deployment
-const DEFAULT_MINING_AGENT_ADDRESS = undefined;
-const DEFAULT_AGENT_COIN_ADDRESS = undefined;
+const DEFAULT_MINING_AGENT_ADDRESS = "0xB7caD3ca5F2BD8aEC2Eb67d6E8D448099B3bC03D" as Address;
+const DEFAULT_AGENT_COIN_ADDRESS = "0x12577CF0D8a07363224D6909c54C056A183e13b3" as Address;
 
 const EXPENSIVE_MODELS = ["gpt-4o", "gpt-4", "claude-3-opus", "claude-3-5-sonnet"];
 const CHEAP_OVERRIDES = ["gpt-4o-mini", "gpt-4-mini"];

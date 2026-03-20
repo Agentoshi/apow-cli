@@ -240,7 +240,7 @@ export async function startMining(tokenId: bigint): Promise<void> {
       const smhlSpinner = ui.spinner("Solving SMHL challenge...");
       const smhlStart = process.hrtime();
       const smhlSolution = await solveSmhlChallenge(smhl, (attempt) => {
-        smhlSpinner.update(`Solving SMHL challenge... attempt ${attempt}/3`);
+        smhlSpinner.update(`Solving SMHL challenge... attempt ${attempt}/5`);
       });
       const smhlElapsed = elapsedSeconds(smhlStart);
       smhlSpinner.stop(`Solving SMHL challenge... done (${smhlElapsed.toFixed(1)}s)`);

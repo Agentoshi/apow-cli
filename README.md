@@ -7,13 +7,13 @@ Mining client for the [APoW (Agentic Proof of Work)](https://github.com/Agentosh
 ## Install
 
 ```bash
-npm install -g apow
+npm install -g apow-cli
 ```
 
 Or run directly:
 
 ```bash
-npx apow
+npx apow-cli
 ```
 
 ## For AI Agents
@@ -22,7 +22,7 @@ Any AI agent can go from zero to actively mining in 5 steps — no human interac
 
 ```bash
 # 1. Generate a wallet
-npx apow wallet new
+npx apow-cli wallet new
 # → Captures address + private key from stdout
 
 # 2. Write .env (no interactive prompts)
@@ -32,30 +32,28 @@ RPC_URL=https://mainnet.base.org
 LLM_PROVIDER=openai
 LLM_MODEL=gpt-4o-mini
 LLM_API_KEY=<your key>
-MINING_AGENT_ADDRESS=0x...
-AGENT_COIN_ADDRESS=0x...
 EOF
 
 # 3. Ask your user to fund the wallet with ≥0.005 ETH on Base
 #    This is the ONLY step that requires human action
 
 # 4. Mint a mining rig NFT (solves SMHL challenge via LLM)
-npx apow mint
+npx apow-cli mint
 
 # 5. Start mining (runs forever, auto-detects best rig)
-npx apow mine
+npx apow-cli mine
 ```
 
 **Scale up** with multiple wallets from a single funded wallet:
 
 ```bash
 # Generate sub-wallets and fund them from your main wallet
-npx apow wallet new                    # → sub-wallet address
-npx apow wallet fund <sub-address>     # sends mint price + gas from main wallet
+npx apow-cli wallet new                    # → sub-wallet address
+npx apow-cli wallet fund <sub-address>     # sends mint price + gas from main wallet
 
 # Mint + mine with each sub-wallet
-PRIVATE_KEY=<sub-key> npx apow mint
-PRIVATE_KEY=<sub-key> npx apow mine &
+PRIVATE_KEY=<sub-key> npx apow-cli mint
+PRIVATE_KEY=<sub-key> npx apow-cli mine &
 ```
 
 Each wallet gets one rig, each rig mines independently. More wallets = more chances to win each block. See [skill.md](skill.md) for the complete autonomous guide.
@@ -66,15 +64,15 @@ If you prefer to do it yourself:
 
 ```bash
 # 1. Interactive setup — wallet, RPC, LLM config
-npx apow setup
+npx apow-cli setup
 
 # 2. Fund your wallet with ETH on Base (≥0.005 ETH)
 
 # 3. Mint a mining rig NFT
-npx apow mint
+npx apow-cli mint
 
 # 4. Start mining
-npx apow mine
+npx apow-cli mine
 ```
 
 ## Commands
@@ -100,8 +98,9 @@ RPC_URL=https://mainnet.base.org
 LLM_PROVIDER=openai            # openai | anthropic | gemini | ollama | claude-code | codex
 LLM_MODEL=gpt-4o-mini
 LLM_API_KEY=sk-...
-MINING_AGENT_ADDRESS=0x...     # Deployed contract address
-AGENT_COIN_ADDRESS=0x...       # Deployed contract address
+# Contract addresses (defaults built-in, override only if needed)
+# MINING_AGENT_ADDRESS=0xB7caD3ca5F2BD8aEC2Eb67d6E8D448099B3bC03D
+# AGENT_COIN_ADDRESS=0x12577CF0D8a07363224D6909c54C056A183e13b3
 ```
 
 See [.env.example](.env.example) for all options.

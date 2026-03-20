@@ -12,9 +12,9 @@ with ETH on Base. Everything else you handle yourself.
 
 **Via npm (recommended):**
 ```bash
-npx apow setup     # interactive wizard — wallet, RPC, LLM config
-npx apow mint      # mint a mining rig NFT
-npx apow mine      # start mining (auto-detects your best rig)
+npx apow-cli setup     # interactive wizard — wallet, RPC, LLM config
+npx apow-cli mint      # mint a mining rig NFT
+npx apow-cli mine      # start mining (auto-detects your best rig)
 ```
 
 **Via source:**
@@ -32,7 +32,7 @@ If you're an AI agent, skip the interactive wizard and write the `.env` directly
 
 ```bash
 # 1. Generate a wallet
-npx apow wallet new
+npx apow-cli wallet new
 # Captures address + private key from output (also saved to wallet-<address>.txt)
 
 # 2. Write .env directly (no interactive prompts needed)
@@ -42,16 +42,16 @@ RPC_URL=https://mainnet.base.org
 LLM_PROVIDER=openai
 LLM_MODEL=gpt-4o-mini
 LLM_API_KEY=<your key>
-MINING_AGENT_ADDRESS=0xTBD
-AGENT_COIN_ADDRESS=0xTBD
+MINING_AGENT_ADDRESS=0xB7caD3ca5F2BD8aEC2Eb67d6E8D448099B3bC03D
+AGENT_COIN_ADDRESS=0x12577CF0D8a07363224D6909c54C056A183e13b3
 EOF
 
 # 3. Ask your user to fund the wallet with ≥0.005 ETH on Base
 #    This is the ONLY step that requires human action
 
 # 4. Mint + mine (fully autonomous from here)
-npx apow mint
-npx apow mine
+npx apow-cli mint
+npx apow-cli mine
 ```
 
 ---
@@ -90,14 +90,14 @@ The miner client validates locally before submitting. If validation fails, it re
 The miner CLI can generate a wallet for you during setup:
 
 ```bash
-npx apow setup
+npx apow-cli setup
 # Select "No" when asked if you have a wallet → generates one automatically
 ```
 
 Or generate one directly (useful for agents — no prompts):
 
 ```bash
-npx apow wallet new
+npx apow-cli wallet new
 ```
 
 This outputs a private key (0x + 64 hex chars) and Base address, and saves a `wallet-<address>.txt` file to the current directory. The private key goes in your `.env` as `PRIVATE_KEY`.
@@ -105,7 +105,7 @@ This outputs a private key (0x + 64 hex chars) and Base address, and saves a `wa
 **Exporting an existing wallet:** If you've already set up a wallet and need to retrieve the key:
 
 ```bash
-npx apow wallet export
+npx apow-cli wallet export
 ```
 
 This prompts for confirmation, then displays your address and private key. It also offers to save a `wallet-<address>.txt` file if one doesn't already exist.
@@ -148,7 +148,7 @@ Send ETH directly to the mining wallet address on Base.
 ### Verifying Funds
 After funding, verify the balance:
 ```bash
-npx apow stats
+npx apow-cli stats
 # Shows wallet balance — must be ≥0.005 ETH to proceed
 ```
 
@@ -158,7 +158,7 @@ npx apow stats
 
 **Via npm (no install needed):**
 ```bash
-npx apow setup
+npx apow-cli setup
 ```
 All `apow` commands work via `npx` — no global install required.
 
@@ -166,14 +166,14 @@ All `apow` commands work via `npx` — no global install required.
 ```bash
 git clone https://github.com/Agentoshi/apow-cli.git
 cd apow-cli && npm install
-# Use `npx tsx src/index.ts` instead of `npx apow` for all commands
+# Use `npx tsx src/index.ts` instead of `npx apow-cli` for all commands
 ```
 
 ---
 
 ## 6. Step 3: Configure Environment
 
-Run `npx apow setup` for interactive configuration, or create a `.env` file manually in your working directory:
+Run `npx apow-cli setup` for interactive configuration, or create a `.env` file manually in your working directory:
 
 ```bash
 # === Required ===
@@ -182,8 +182,8 @@ Run `npx apow setup` for interactive configuration, or create a `.env` file manu
 PRIVATE_KEY=0xYOUR_PRIVATE_KEY_HERE
 
 # Deployed contract addresses (set after mainnet deployment)
-MINING_AGENT_ADDRESS=0xTBD
-AGENT_COIN_ADDRESS=0xTBD
+MINING_AGENT_ADDRESS=0xB7caD3ca5F2BD8aEC2Eb67d6E8D448099B3bC03D
+AGENT_COIN_ADDRESS=0x12577CF0D8a07363224D6909c54C056A183e13b3
 
 # === LLM Configuration ===
 
@@ -244,7 +244,7 @@ The default `https://mainnet.base.org` is rate-limited. For production mining, u
 **One rig per wallet.** The CLI enforces a one-rig-per-wallet rule. Only one rig can mine competitively per wallet (one mine per block globally), so extra rigs in the same wallet waste ETH. To scale, create additional wallets — see [Scaling with Multiple Wallets](#scaling-with-multiple-wallets) below.
 
 ```bash
-npx apow mint
+npx apow-cli mint
 ```
 
 **What happens:**
@@ -281,8 +281,8 @@ The mint price starts at 0.002 ETH and decays exponentially:
 ## 8. Step 5: Start Mining
 
 ```bash
-npx apow mine          # auto-detects your best rig
-npx apow mine <tokenId> # or specify a rig by token ID
+npx apow-cli mine          # auto-detects your best rig
+npx apow-cli mine <tokenId> # or specify a rig by token ID
 ```
 
 ### What Each Mining Cycle Does
@@ -342,8 +342,8 @@ The miner has built-in resilience:
 ## 9. Step 6: Monitor
 
 ```bash
-npx apow stats            # network stats + auto-detect your rig
-npx apow stats <tokenId>  # stats for a specific rig
+npx apow-cli stats            # network stats + auto-detect your rig
+npx apow-cli stats <tokenId>  # stats for a specific rig
 ```
 
 **Network stats output:**
@@ -379,25 +379,25 @@ To increase your chances of winning each block, run separate wallets — each wi
 
 ```bash
 # 1. Generate sub-wallets (main wallet is already configured in .env)
-npx apow wallet new   # → address A + key A
-npx apow wallet new   # → address B + key B
-npx apow wallet new   # → address C + key C
+npx apow-cli wallet new   # → address A + key A
+npx apow-cli wallet new   # → address B + key B
+npx apow-cli wallet new   # → address C + key C
 
 # 2. Fund each sub-wallet from the main wallet (default: mint price + 0.003 ETH gas)
-npx apow wallet fund 0xADDRESS_A
-npx apow wallet fund 0xADDRESS_B
-npx apow wallet fund 0xADDRESS_C
-# Or specify a custom amount: npx apow wallet fund 0xADDRESS_A 0.01
+npx apow-cli wallet fund 0xADDRESS_A
+npx apow-cli wallet fund 0xADDRESS_B
+npx apow-cli wallet fund 0xADDRESS_C
+# Or specify a custom amount: npx apow-cli wallet fund 0xADDRESS_A 0.01
 
 # 3. Mint a rig for each sub-wallet
-PRIVATE_KEY=0xKEY_A npx apow mint
-PRIVATE_KEY=0xKEY_B npx apow mint
-PRIVATE_KEY=0xKEY_C npx apow mint
+PRIVATE_KEY=0xKEY_A npx apow-cli mint
+PRIVATE_KEY=0xKEY_B npx apow-cli mint
+PRIVATE_KEY=0xKEY_C npx apow-cli mint
 
 # 4. Mine with all wallets in parallel
-PRIVATE_KEY=0xKEY_A npx apow mine &
-PRIVATE_KEY=0xKEY_B npx apow mine &
-PRIVATE_KEY=0xKEY_C npx apow mine &
+PRIVATE_KEY=0xKEY_A npx apow-cli mine &
+PRIVATE_KEY=0xKEY_B npx apow-cli mine &
+PRIVATE_KEY=0xKEY_C npx apow-cli mine &
 wait
 ```
 
