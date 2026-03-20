@@ -1,4 +1,4 @@
-import type { Abi, Address, Hex } from "viem";
+import type { Abi, Hex } from "viem";
 import { formatEther, hexToBytes } from "viem";
 
 import miningAgentAbiJson from "./abi/MiningAgent.json";
@@ -39,40 +39,6 @@ function deriveChallengeFromSeed(seed: Hex): SmhlChallenge {
     charValue,
     totalLength,
   ]);
-}
-
-async function findMintedTokenId(
-  startTokenId: bigint,
-  endTokenIdExclusive: bigint,
-  owner: Address,
-  blockNumber: bigint,
-): Promise<bigint> {
-  for (let tokenId = startTokenId; tokenId < endTokenIdExclusive; tokenId += 1n) {
-    try {
-      const [tokenOwner, mintBlock] = await Promise.all([
-        publicClient.readContract({
-          address: config.miningAgentAddress,
-          abi: miningAgentAbi,
-          functionName: "ownerOf",
-          args: [tokenId],
-        }) as Promise<Address>,
-        publicClient.readContract({
-          address: config.miningAgentAddress,
-          abi: miningAgentAbi,
-          functionName: "mintBlock",
-          args: [tokenId],
-        }) as Promise<bigint>,
-      ]);
-
-      if (tokenOwner.toLowerCase() === owner.toLowerCase() && mintBlock === blockNumber) {
-        return tokenId;
-      }
-    } catch {
-      // Ignore missing token ids while scanning the minted window.
-    }
-  }
-
-  throw new Error("Unable to determine minted token ID from post-mint contract state.");
 }
 
 export async function runMintFlow(): Promise<void> {
@@ -168,15 +134,21 @@ export async function runMintFlow(): Promise<void> {
   }
   challengeSpinner.stop("Requesting challenge... done");
 
-  const challengeSeed = (await publicClient.readContract({
-    address: config.miningAgentAddress,
-    abi: miningAgentAbi,
-    functionName: "challengeSeeds",
-    args: [account.address],
-  })) as Hex;
+  // Read challenge seed with retry (public RPC may lag behind tx confirmation)
+  let challengeSeed: Hex = ZERO_SEED;
+  for (let retry = 0; retry < 5; retry++) {
+    challengeSeed = (await publicClient.readContract({
+      address: config.miningAgentAddress,
+      abi: miningAgentAbi,
+      functionName: "challengeSeeds",
+      args: [account.address],
+    })) as Hex;
+    if (challengeSeed.toLowerCase() !== ZERO_SEED.toLowerCase()) break;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
 
   if (challengeSeed.toLowerCase() === ZERO_SEED.toLowerCase()) {
-    throw new Error("Challenge seed was not stored on-chain.");
+    throw new Error("Challenge seed not found after 5 retries. The RPC may be lagging — try again.");
   }
 
   // Solve SMHL
@@ -186,12 +158,6 @@ export async function runMintFlow(): Promise<void> {
     smhlSpinner.update(`Solving SMHL... attempt ${attempt}/5`);
   });
   smhlSpinner.stop("Solving SMHL... done");
-
-  const nextTokenIdBefore = (await publicClient.readContract({
-    address: config.miningAgentAddress,
-    abi: miningAgentAbi,
-    functionName: "nextTokenId",
-  })) as bigint;
 
   // Mint
   const mintSpinner = ui.spinner("Minting...");
@@ -210,18 +176,18 @@ export async function runMintFlow(): Promise<void> {
   }
   mintSpinner.stop("Minting... confirmed");
 
-  const nextTokenIdAfter = (await publicClient.readContract({
-    address: config.miningAgentAddress,
-    abi: miningAgentAbi,
-    functionName: "nextTokenId",
-  })) as bigint;
-
-  const tokenId = await findMintedTokenId(
-    nextTokenIdBefore,
-    nextTokenIdAfter,
-    account.address,
-    receipt.blockNumber,
+  // Parse token ID from Transfer event in receipt (avoids stale RPC reads)
+  const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+  const mintLog = receipt.logs.find(
+    (log) =>
+      log.address.toLowerCase() === config.miningAgentAddress.toLowerCase() &&
+      log.topics[0] === TRANSFER_TOPIC &&
+      log.topics[1] === "0x0000000000000000000000000000000000000000000000000000000000000000",
   );
+  if (!mintLog || !mintLog.topics[3]) {
+    throw new Error("Mint tx confirmed but Transfer event not found in logs. Check tx on Basescan.");
+  }
+  const tokenId = BigInt(mintLog.topics[3]);
 
   const [rarityRaw, hashpowerRaw] = await Promise.all([
     publicClient.readContract({

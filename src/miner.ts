@@ -270,21 +270,18 @@ export async function startMining(tokenId: bigint): Promise<void> {
       }
       txSpinner.stop("Submitting transaction... confirmed");
 
-      // Fetch post-mine stats
-      const [tokenMineCount, earnings] = await Promise.all([
-        publicClient.readContract({
-          address: config.agentCoinAddress,
-          abi: agentCoinAbi,
-          functionName: "tokenMineCount",
-          args: [tokenId],
-        }) as Promise<bigint>,
-        publicClient.readContract({
+      // Fetch post-mine earnings with retry (public RPC may lag)
+      let earnings = runningTotal;
+      for (let retry = 0; retry < 5; retry++) {
+        earnings = (await publicClient.readContract({
           address: config.agentCoinAddress,
           abi: agentCoinAbi,
           functionName: "tokenEarnings",
           args: [tokenId],
-        }) as Promise<bigint>,
-      ]);
+        })) as bigint;
+        if (earnings > runningTotal) break;
+        await new Promise((r) => setTimeout(r, 2000));
+      }
 
       const delta = earnings - runningTotal;
       runningTotal = earnings;

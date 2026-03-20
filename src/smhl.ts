@@ -70,8 +70,8 @@ export function validateSmhlSolution(solution: string, challenge: SmhlChallenge)
   }
 
   const len = Buffer.byteLength(solution, "utf8");
-  if (Math.abs(len - challenge.totalLength) > 5) {
-    issues.push(`length ${len} not within ±5 of ${challenge.totalLength}`);
+  if (Math.abs(len - challenge.totalLength) > 4) {
+    issues.push(`length ${len} not within ±4 of ${challenge.totalLength}`);
   }
 
   if (!/^[\x20-\x7E]+$/.test(solution)) {
@@ -98,8 +98,8 @@ export function validateSmhlSolution(solution: string, challenge: SmhlChallenge)
  */
 function adjustSolution(raw: string, challenge: SmhlChallenge): string {
   const requiredChar = String.fromCharCode(challenge.charValue);
-  const minLen = challenge.totalLength - 5;
-  const maxLen = challenge.totalLength + 5;
+  const minLen = challenge.totalLength - 4;
+  const maxLen = challenge.totalLength + 4;
   const maxWords = challenge.wordCount + 2;
 
   // Clean: lowercase, letters and spaces only, collapse whitespace
