@@ -541,7 +541,91 @@ Use the corresponding testnet contract addresses.
 
 ---
 
-## 12. Contract Addresses
+## 12. Security & Trust
+
+This section addresses the security model of apow-cli head-on. Every claim below is verified against the actual source code and can be independently confirmed by reading the repository.
+
+### Private Key Generation -- Local Only
+
+Keys are generated via `viem/accounts` `generatePrivateKey()`, which uses Node.js `crypto.randomBytes(32)` -- a cryptographically secure random number generator. Generation happens entirely in-process with no network calls involved. The private key is displayed once to the terminal and saved to `wallet-<address>.txt` with file permissions `0o600` (owner-read-write only).
+
+### Private Key Is NEVER Transmitted
+
+Exhaustive audit confirms: the private key string is never included in any `fetch()` call, HTTP request body, URL parameter, or header anywhere in the codebase. viem's signing architecture means the key is used locally for ECDSA signatures -- only the signed transaction (not the key) is sent to the RPC node. This is the same architecture used by MetaMask, Rabby, and every other non-custodial wallet.
+
+### Zero Telemetry
+
+The CLI contains no analytics, no error reporting, and no phone-home behavior of any kind:
+
+- No analytics SDKs (no Mixpanel, no PostHog, no Google Analytics)
+- No error reporting services (no Sentry, no Bugsnag)
+- No tracking pixels, no usage metrics, no telemetry endpoints
+
+The CLI makes exactly two types of network calls:
+
+1. **Blockchain RPC** (to user-configured RPC URL, default: `mainnet.base.org`) -- standard `eth_call`, `eth_sendRawTransaction`, etc.
+2. **LLM API** (to user-configured provider) -- sends only word-puzzle prompts for SMHL solving, never wallet data
+
+Nothing else. No other outbound connections.
+
+### LLM Calls Are Data-Isolated
+
+The SMHL solver sends only generic word-generation prompts to the LLM (e.g., "Write exactly 5 lowercase English words..."). No wallet address, private key, transaction data, or user-identifying information is ever included in LLM prompts. The string `privateKey` does not appear anywhere in `smhl.ts`.
+
+### Open Source & Auditable
+
+- Full source code: [github.com/Agentoshi/apow-cli](https://github.com/Agentoshi/apow-cli)
+- MIT licensed
+- Every line is auditable -- there are no obfuscated modules, no binary blobs, no minified dependencies performing network calls
+- Smart contracts are separately auditable: [github.com/Agentoshi/apow-core](https://github.com/Agentoshi/apow-core)
+
+### npm Package Integrity
+
+- Published as `apow-cli` on npm
+- Package contents match the GitHub source -- verify with `npm pack --dry-run` or compare against the repo
+- No `postinstall` scripts that execute arbitrary code
+- The `package.json` `scripts` section contains only standard build/dev commands
+
+### Best Practices for Users
+
+1. **Use a fresh wallet.** Generate one with `npx apow-cli wallet new`. Do not import your main wallet or any wallet holding significant funds.
+2. **Fund with only what you need.** ~0.005 ETH covers minting + several mining cycles.
+3. **Wallet backups are created automatically** at `wallet-<address>.txt` with restricted file permissions (`0o600`).
+4. **Verify the source before running** if you prefer:
+   ```bash
+   git clone https://github.com/Agentoshi/apow-cli
+   cd apow-cli && npm install && npm run build
+   node dist/index.js setup
+   ```
+5. **Review dependencies.** The dependency tree is minimal and standard: `viem` (Ethereum library), `commander` (CLI framework), `dotenv` (env loading), `chalk`/`ora` (terminal UI), and an LLM client. No exotic or suspicious packages.
+
+### How to Verify These Claims Yourself
+
+Every statement above can be independently verified:
+
+```bash
+# Clone the source
+git clone https://github.com/Agentoshi/apow-cli && cd apow-cli
+
+# Search for any outbound network calls -- you'll find only RPC and LLM calls
+grep -r "fetch\|axios\|http\|request" src/
+
+# Confirm private key is never in any network payload
+grep -r "privateKey" src/  # only appears in local wallet operations, never in fetch/request calls
+
+# Check for telemetry/analytics packages
+grep -r "mixpanel\|posthog\|sentry\|bugsnag\|analytics\|telemetry" src/ package.json
+
+# Verify wallet file permissions
+grep -r "0o600\|0600" src/  # wallet files are created with owner-only permissions
+
+# Check postinstall scripts
+cat package.json | grep -A5 "scripts"  # no postinstall hook
+```
+
+---
+
+## 13. Contract Addresses
 
 | Contract | Address |
 |---|---|
