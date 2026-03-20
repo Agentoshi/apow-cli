@@ -4,14 +4,13 @@ import { formatEther } from "viem";
 import agentCoinAbiJson from "./abi/AgentCoin.json";
 import miningAgentAbiJson from "./abi/MiningAgent.json";
 import { config } from "./config";
-import { formatHashpower } from "./detect";
+import { formatHashpower, rarityLabels } from "./detect";
 import { tokenUrl } from "./explorer";
 import * as ui from "./ui";
 import { account, publicClient } from "./wallet";
 
 const miningAgentAbi = miningAgentAbiJson as Abi;
 const agentCoinAbi = agentCoinAbiJson as Abi;
-const rarityLabels = ["Common", "Uncommon", "Rare", "Epic", "Mythic"] as const;
 
 export async function displayStats(tokenId?: bigint): Promise<void> {
   const [totalMines, totalMinted, miningTarget, mineableSupply, eraInterval, walletBalance] = await Promise.all([

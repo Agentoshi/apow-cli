@@ -13,6 +13,9 @@ dist/
 # IDE
 .claude/
 
+# Wallet key files
+wallet-*.txt
+
 # Test files (kept locally, not in repo)
 smhl-local-test.ts
 stress-test.ts

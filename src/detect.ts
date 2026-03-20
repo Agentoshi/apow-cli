@@ -5,7 +5,7 @@ import { config } from "./config";
 import { publicClient } from "./wallet";
 
 const miningAgentAbi = miningAgentAbiJson as Abi;
-const rarityLabels = ["Common", "Uncommon", "Rare", "Epic", "Mythic"] as const;
+export const rarityLabels = ["Common", "Uncommon", "Rare", "Epic", "Mythic"] as const;
 
 export interface OwnedMiner {
   tokenId: bigint;

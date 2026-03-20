@@ -4,7 +4,7 @@ import { encodePacked, formatEther, keccak256 } from "viem";
 import agentCoinAbiJson from "./abi/AgentCoin.json";
 import miningAgentAbiJson from "./abi/MiningAgent.json";
 import { config } from "./config";
-import { detectMiners, formatHashpower, selectBestMiner } from "./detect";
+import { detectMiners, formatHashpower, rarityLabels, selectBestMiner } from "./detect";
 import { classifyError } from "./errors";
 import { txUrl } from "./explorer";
 import { normalizeSmhlChallenge, solveSmhlChallenge } from "./smhl";
@@ -140,7 +140,6 @@ async function showStartupBanner(tokenId: bigint): Promise<void> {
       }) as Promise<bigint>,
     ]);
 
-  const rarityLabels = ["Common", "Uncommon", "Rare", "Epic", "Mythic"];
   const rarity = Number(rarityRaw);
   const hashpower = Number(hashpowerRaw);
   const era = totalMines / eraInterval;

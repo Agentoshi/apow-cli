@@ -5,14 +5,13 @@ import miningAgentAbiJson from "./abi/MiningAgent.json";
 import { config } from "./config";
 import { txUrl, tokenUrl } from "./explorer";
 import { normalizeSmhlChallenge, solveSmhlChallenge, type SmhlChallenge } from "./smhl";
-import { formatHashpower } from "./detect";
+import { formatHashpower, rarityLabels } from "./detect";
 import { startMining } from "./miner";
 import * as ui from "./ui";
 import { getEthBalance, publicClient, requireWallet } from "./wallet";
 
 const miningAgentAbi = miningAgentAbiJson as Abi;
 const ZERO_SEED = `0x${"0".repeat(64)}` as Hex;
-const rarityLabels = ["Common", "Uncommon", "Rare", "Epic", "Mythic"] as const;
 
 function deriveChallengeFromSeed(seed: Hex): SmhlChallenge {
   const bytes = hexToBytes(seed);

@@ -33,7 +33,7 @@ function saveKeyFile(address: string, privateKey: string): string {
     `Keep this file safe — anyone with the private key controls your funds.`,
     "",
   ].join("\n");
-  writeFileSync(filepath, content, "utf8");
+  writeFileSync(filepath, content, { encoding: "utf8", mode: 0o600 });
   return filepath;
 }
 
