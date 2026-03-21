@@ -16,6 +16,16 @@ Or run directly:
 npx apow-cli
 ```
 
+## Important: RPC Endpoint
+
+> **The default public RPC (`mainnet.base.org`) is unreliable for mining.** It rate-limits aggressively and will cause frequent transaction failures. **We strongly recommend getting a free Alchemy endpoint** before you start:
+>
+> 1. Sign up at [alchemy.com](https://www.alchemy.com/) (free, no credit card)
+> 2. Create an app → Chain: **Base** → Network: **Base Mainnet**
+> 3. Copy the HTTPS URL → set `RPC_URL` in your `.env`
+>
+> Alchemy's free tier gives you 300M compute units/month — more than enough for mining. See [RPC Recommendations](skill.md#rpc-recommendations) for other free options.
+
 ## For AI Agents
 
 Any AI agent can go from zero to actively mining in 5 steps — no human interaction except funding the wallet.
@@ -28,7 +38,7 @@ npx apow-cli wallet new
 # 2. Write .env (no interactive prompts)
 cat > .env << 'EOF'
 PRIVATE_KEY=0x<from step 1>
-RPC_URL=https://mainnet.base.org
+RPC_URL=https://mainnet.base.org  # UNRELIABLE — get a free Alchemy URL (see above)
 LLM_PROVIDER=openai
 LLM_MODEL=gpt-4o-mini
 LLM_API_KEY=<your key>
@@ -97,7 +107,7 @@ Create a `.env` file or use `apow setup`:
 
 ```bash
 PRIVATE_KEY=0x...              # Your wallet private key
-RPC_URL=https://mainnet.base.org
+RPC_URL=https://mainnet.base.org  # UNRELIABLE — strongly recommend a free Alchemy URL instead (see above)
 LLM_PROVIDER=openai            # openai | anthropic | gemini | ollama | claude-code | codex
 LLM_MODEL=gpt-4o-mini
 LLM_API_KEY=sk-...

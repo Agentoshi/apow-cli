@@ -7,6 +7,10 @@
 node_modules/
 dist/
 
+# Dashboard
+dashboard/.next/
+dashboard/node_modules/
+
 # OS
 .DS_Store
 

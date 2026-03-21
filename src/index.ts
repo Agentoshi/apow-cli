@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { spawn } from "node:child_process";
 import { Command } from "commander";
 
 import type { Abi } from "viem";
@@ -477,7 +478,208 @@ async function main(): Promise<void> {
       console.log("");
     });
 
+  // --- Dashboard commands ---
+  const dashboardCmd = program
+    .command("dashboard")
+    .description("Multi-wallet mining dashboard");
+
+  dashboardCmd
+    .command("start", { isDefault: true })
+    .description("Launch the dashboard web UI")
+    .action(async () => {
+      const walletsPath = getWalletsPath();
+
+      // Seed wallets.json if it doesn't exist
+      if (!existsSync(walletsPath)) {
+        const walletsDir = join(process.env.HOME ?? "", ".apow");
+        if (!existsSync(walletsDir)) mkdirSync(walletsDir, { recursive: true });
+        const initial = account ? [account.address] : [];
+        writeFileSync(walletsPath, JSON.stringify(initial, null, 2), "utf8");
+        if (account) {
+          ui.ok(`Seeded ${walletsPath} with ${account.address.slice(0, 6)}...${account.address.slice(-4)}`);
+        } else {
+          ui.ok(`Created ${walletsPath} (empty — add wallets with: apow dashboard add <address>)`);
+        }
+      }
+
+      // Auto-detect wallets from CWD
+      const { addresses, newCount } = detectWallets(process.cwd());
+      if (newCount > 0) {
+        ui.ok(`Detected ${addresses.length} wallets (${newCount} new)`);
+      } else if (addresses.length > 0) {
+        console.log(`  ${ui.dim(`${addresses.length} wallets loaded`)}`);
+      }
+
+      const { startDashboardServer } = await import("./dashboard");
+
+      console.log("");
+      console.log(`  ${ui.bold("APoW Dashboard")} starting on http://localhost:3847`);
+      console.log(`  ${ui.dim("Press Ctrl+C to stop")}`);
+      console.log("");
+
+      const server = startDashboardServer({
+        port: 3847,
+        walletsPath,
+        rpcUrl: config.rpcUrl,
+        miningAgentAddress: config.miningAgentAddress as `0x${string}`,
+        agentCoinAddress: config.agentCoinAddress as `0x${string}`,
+      });
+
+      // Open browser after short delay (server starts instantly)
+      setTimeout(() => {
+        const openCmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
+        spawn(openCmd, ["http://localhost:3847"], { stdio: "ignore" });
+      }, 500);
+
+      // Wait for SIGINT
+      await new Promise<void>((resolve) => {
+        process.on("SIGINT", () => {
+          server.close();
+          resolve();
+        });
+      });
+    });
+
+  dashboardCmd
+    .command("add <address>")
+    .description("Add a wallet address to monitor")
+    .action((address: string) => {
+      if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+        ui.error("Invalid address. Must be 0x + 40 hex characters.");
+        return;
+      }
+      const walletsPath = getWalletsPath();
+      const wallets = loadWallets(walletsPath);
+      const lower = address.toLowerCase();
+      if (wallets.some((w) => w.toLowerCase() === lower)) {
+        ui.warn("Address already monitored.");
+        return;
+      }
+      wallets.push(address);
+      saveWallets(walletsPath, wallets);
+      ui.ok(`Added ${address.slice(0, 6)}...${address.slice(-4)} (${wallets.length} wallets total)`);
+    });
+
+  dashboardCmd
+    .command("remove <address>")
+    .description("Remove a wallet address from monitoring")
+    .action((address: string) => {
+      const walletsPath = getWalletsPath();
+      const wallets = loadWallets(walletsPath);
+      const lower = address.toLowerCase();
+      const filtered = wallets.filter((w) => w.toLowerCase() !== lower);
+      if (filtered.length === wallets.length) {
+        ui.warn("Address not found in wallet list.");
+        return;
+      }
+      saveWallets(walletsPath, filtered);
+      ui.ok(`Removed ${address.slice(0, 6)}...${address.slice(-4)} (${filtered.length} wallets remaining)`);
+    });
+
+  dashboardCmd
+    .command("scan [dir]")
+    .description("Auto-detect wallets from wallet-0x*.txt files in a directory")
+    .action((dir?: string) => {
+      const scanDir = dir ?? process.cwd();
+      const { addresses, newCount } = detectWallets(scanDir);
+      console.log("");
+      if (addresses.length === 0) {
+        console.log(`  No wallets found in ${scanDir}`);
+        console.log(`  ${ui.dim("Expected files named wallet-0x<address>.txt")}`);
+      } else {
+        console.log(`  ${ui.bold("Detected Wallets")} (${newCount} new, ${addresses.length} total)`);
+        console.log("");
+        for (const addr of addresses) {
+          console.log(`  ${addr}`);
+        }
+      }
+      console.log("");
+    });
+
+  dashboardCmd
+    .command("wallets")
+    .description("List monitored wallet addresses")
+    .action(() => {
+      const walletsPath = getWalletsPath();
+      const wallets = loadWallets(walletsPath);
+      if (wallets.length === 0) {
+        console.log("  No wallets configured. Run: apow dashboard add <address>");
+        return;
+      }
+      console.log("");
+      console.log(`  ${ui.bold("Monitored Wallets")} (${wallets.length})`);
+      console.log("");
+      for (const w of wallets) {
+        console.log(`  ${w}`);
+      }
+      console.log("");
+    });
+
   await program.parseAsync(process.argv);
+}
+
+function getWalletsPath(): string {
+  return join(process.env.HOME ?? "", ".apow", "wallets.json");
+}
+
+function loadWallets(path: string): string[] {
+  try {
+    const raw = readFileSync(path, "utf8");
+    const data = JSON.parse(raw);
+    return Array.isArray(data) ? data.filter((a: unknown) => typeof a === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveWallets(path: string, wallets: string[]): void {
+  const dir = join(process.env.HOME ?? "", ".apow");
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(path, JSON.stringify(wallets, null, 2), "utf8");
+}
+
+function detectWallets(scanDir: string): { addresses: string[]; newCount: number } {
+  const walletsPath = getWalletsPath();
+  const existing = loadWallets(walletsPath);
+  const seen = new Set(existing.map((a) => a.toLowerCase()));
+  const detected: string[] = [];
+
+  // Scan scanDir for wallet-0x*.txt files
+  try {
+    const entries = readdirSync(scanDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isFile()) {
+        const match = entry.name.match(/^wallet-(0x[0-9a-fA-F]{40})\.txt$/);
+        if (match && !seen.has(match[1].toLowerCase())) {
+          detected.push(match[1]);
+          seen.add(match[1].toLowerCase());
+        }
+      }
+      // Scan rig*/wallet-0x*.txt subdirectories
+      if (entry.isDirectory() && entry.name.startsWith("rig")) {
+        try {
+          const rigFiles = readdirSync(join(scanDir, entry.name));
+          for (const file of rigFiles) {
+            const m = file.match(/^wallet-(0x[0-9a-fA-F]{40})\.txt$/);
+            if (m && !seen.has(m[1].toLowerCase())) {
+              detected.push(m[1]);
+              seen.add(m[1].toLowerCase());
+            }
+          }
+        } catch {
+          // rig dir not readable — skip
+        }
+      }
+    }
+  } catch {
+    // scanDir not readable
+  }
+
+  const merged = [...existing, ...detected];
+  if (detected.length > 0) {
+    saveWallets(walletsPath, merged);
+  }
+  return { addresses: merged, newCount: detected.length };
 }
 
 main().catch((error) => {

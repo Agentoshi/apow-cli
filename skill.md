@@ -23,6 +23,15 @@ metadata:
 configure the miner, mint, and mine. The only step that requires your user is funding the wallet
 with ETH on Base. Everything else you handle yourself.
 
+> **IMPORTANT — You need a dedicated RPC endpoint.** The default public RPC (`https://mainnet.base.org`) has aggressive rate limits and **will cause minting and mining to fail**. Before starting, get a free Alchemy endpoint:
+>
+> 1. Go to [alchemy.com](https://www.alchemy.com/) and sign up (free, no credit card)
+> 2. Click **Create new app** → Name: `apow-miner` → Chain: **Base** → Network: **Base Mainnet**
+> 3. Copy the **HTTPS** URL: `https://base-mainnet.g.alchemy.com/v2/YOUR_API_KEY`
+> 4. Set `RPC_URL` to this URL in your `.env`
+>
+> Alchemy's free tier (300M compute units/month) is more than enough. See [RPC Recommendations](#rpc-recommendations) for alternatives.
+
 ---
 
 ## Quick Start (TL;DR)
@@ -56,6 +65,7 @@ npx apow-cli wallet new
 # 2. Write .env directly (no interactive prompts needed)
 #    IMPORTANT: Use an API-based provider (openai/anthropic/gemini), NOT claude-code/codex.
 #    Session-based providers are too slow for the 20-second mint challenge window.
+#    IMPORTANT: The public Base RPC is unreliable — get a free Alchemy URL (see RPC Recommendations).
 cat > .env << 'EOF'
 PRIVATE_KEY=0x<from step 1>
 RPC_URL=https://mainnet.base.org
@@ -243,7 +253,8 @@ LLM_MODEL=gpt-4o-mini
 
 # === Network ===
 
-# Base RPC endpoint (default: https://mainnet.base.org)
+# Base RPC endpoint — the public default is unreliable for sustained mining.
+# Strongly recommend a free Alchemy key: https://www.alchemy.com/ (no credit card)
 RPC_URL=https://mainnet.base.org
 
 # Chain: "base" | "baseSepolia" (auto-detected from RPC_URL if omitted)
@@ -260,7 +271,7 @@ CHAIN=base
 | `LLM_PROVIDER` | No | `openai` | LLM provider: `openai`, `anthropic`, `ollama`, `gemini`, `claude-code`, or `codex` |
 | `LLM_API_KEY` | Conditional | -- | API key. Falls back to `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` per provider. Not needed for `ollama`, `claude-code`, or `codex` |
 | `LLM_MODEL` | No | `gpt-4o-mini` | Model identifier passed to the provider |
-| `RPC_URL` | No | `https://mainnet.base.org` | Base JSON-RPC endpoint |
+| `RPC_URL` | **Strongly recommended** | `https://mainnet.base.org` | Base JSON-RPC endpoint. **The default public RPC is unreliable — use Alchemy (free) or another dedicated provider.** |
 | `CHAIN` | No | `base` | Network selector; auto-detects `baseSepolia` if RPC URL contains "sepolia" |
 | `SOLANA_RPC_URL` | No | `https://api.mainnet-beta.solana.com` | Solana RPC endpoint (only for `apow fund --solana`) |
 | `SQUID_INTEGRATOR_ID` | No | -- | Squid Router integrator ID for deposit address flow (free at [squidrouter.com](https://app.squidrouter.com/)) |
