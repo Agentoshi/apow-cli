@@ -105,6 +105,7 @@ a{color:inherit;text-decoration:none}
   var prevMines = {};
   var activeWallets = {};
   var lastSeen = {};
+  var pollCount = 0;
 
   function fetchJson(url) {
     return fetch(url).then(function(r) {
@@ -148,6 +149,17 @@ a{color:inherit;text-decoration:none}
 
   function updateActiveWallets(wallets) {
     if (!wallets) return;
+    pollCount++;
+    // Skip first 2 polls to establish stable baseline (avoids false positives on load/refresh)
+    if (pollCount <= 2) {
+      for (var i = 0; i < wallets.length; i++) {
+        var w = wallets[i];
+        var totalMines = 0;
+        for (var j = 0; j < w.miners.length; j++) totalMines += Number(w.miners[j].mineCount);
+        prevMines[w.address] = totalMines;
+      }
+      return;
+    }
     var now = Date.now();
     for (var i = 0; i < wallets.length; i++) {
       var w = wallets[i];

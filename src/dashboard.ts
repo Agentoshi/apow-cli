@@ -207,11 +207,71 @@ export function startDashboardServer(opts: DashboardOpts): http.Server {
   const artCache = new Map<string, string>();
   const htmlPage = getDashboardHtml();
 
+  // Response cache with TTL — always serve cached data, refresh in background
+  const responseCache = new Map<string, { data: string; ts: number }>();
+  const pendingFetches = new Map<string, Promise<string>>();
+  const CACHE_TTL = 25_000; // 25s — slightly less than client's 30s poll
+
+  async function cachedHandler(key: string, handler: () => Promise<string>): Promise<string> {
+    const cached = responseCache.get(key);
+    const now = Date.now();
+    const isStale = !cached || (now - cached.ts > CACHE_TTL);
+
+    if (isStale && !pendingFetches.has(key)) {
+      // Fetch fresh data (non-blocking if we have stale data to return)
+      const fetchPromise = handler()
+        .then((result) => {
+          responseCache.set(key, { data: result, ts: Date.now() });
+          pendingFetches.delete(key);
+          return result;
+        })
+        .catch((err) => {
+          pendingFetches.delete(key);
+          if (cached) return cached.data;
+          throw err;
+        });
+      pendingFetches.set(key, fetchPromise);
+
+      // No cached data yet — must wait for first fetch
+      if (!cached) return fetchPromise;
+    }
+
+    // If we have a pending fetch and no cache, wait for it
+    if (!cached && pendingFetches.has(key)) {
+      return pendingFetches.get(key)!;
+    }
+
+    // Return cached data immediately (even if stale — background refresh handles it)
+    return cached ? cached.data : "{}";
+  }
+
+  // Chunked multicall — split large batches to avoid RPC limits
+  type McContract = { address: Address; abi: Abi; functionName: string; args?: readonly unknown[] };
+  const MULTICALL_CHUNK = 30; // max calls per multicall batch
+  async function chunkedMulticall(contracts: McContract[]): Promise<{ status: string; result?: unknown; error?: unknown }[]> {
+    if (contracts.length <= MULTICALL_CHUNK) {
+      return publicClient.multicall({ contracts });
+    }
+    const results: { status: string; result?: unknown; error?: unknown }[] = [];
+    for (let i = 0; i < contracts.length; i += MULTICALL_CHUNK) {
+      const chunk = contracts.slice(i, i + MULTICALL_CHUNK);
+      try {
+        const chunkResults = await publicClient.multicall({ contracts: chunk });
+        results.push(...chunkResults);
+      } catch {
+        for (let j = 0; j < chunk.length; j++) {
+          results.push({ status: "failure" });
+        }
+      }
+    }
+    return results;
+  }
+
   async function handleWallets(fleetParam: string | null): Promise<string> {
     const addresses = getAddressesForFleet(fleetParam, walletsPath);
     if (addresses.length === 0) return "[]";
 
-    // Phase 1: ETH balance + AGENT balance + NFT count
+    // Phase 1: ETH balance + AGENT balance + NFT count (chunked)
     const phase1Contracts = addresses.flatMap((addr) => [
       { address: agentCoinAddress, abi: AgentCoinAbi, functionName: "balanceOf" as const, args: [addr] },
       { address: miningAgentAddress, abi: MiningAgentAbi, functionName: "balanceOf" as const, args: [addr] },
@@ -219,17 +279,17 @@ export function startDashboardServer(opts: DashboardOpts): http.Server {
 
     const [balances, multicallResults] = await Promise.all([
       Promise.all(addresses.map((addr) => publicClient.getBalance({ address: addr }).catch(() => 0n))),
-      publicClient.multicall({ contracts: phase1Contracts }),
+      chunkedMulticall(phase1Contracts),
     ]);
 
     const walletInfos = addresses.map((addr, i) => ({
       address: addr,
       ethBalance: balances[i],
-      agentBalance: (multicallResults[i * 2].result as bigint) ?? 0n,
-      nftCount: Number((multicallResults[i * 2 + 1].result as bigint) ?? 0n),
+      agentBalance: (multicallResults[i * 2]?.result as bigint) ?? 0n,
+      nftCount: Number((multicallResults[i * 2 + 1]?.result as bigint) ?? 0n),
     }));
 
-    // Phase 2: token IDs
+    // Phase 2: token IDs (chunked)
     const tokenIdContracts: { address: Address; abi: Abi; functionName: string; args: [Address, bigint] }[] = [];
     const tokenIdMap: { walletIdx: number }[] = [];
 
@@ -249,7 +309,7 @@ export function startDashboardServer(opts: DashboardOpts): http.Server {
     const tokenIds: bigint[] = [];
     const validTokenMap: number[] = [];
     if (tokenIdContracts.length > 0) {
-      const tokenIdResults = await publicClient.multicall({ contracts: tokenIdContracts });
+      const tokenIdResults = await chunkedMulticall(tokenIdContracts);
       for (let i = 0; i < tokenIdResults.length; i++) {
         const r = tokenIdResults[i];
         if (r.status === "success" && r.result != null) {
@@ -270,7 +330,7 @@ export function startDashboardServer(opts: DashboardOpts): http.Server {
       return JSON.stringify(wallets);
     }
 
-    // Phase 3: miner stats + art
+    // Phase 3: miner stats (chunked) + art
     const uncachedTokenIds = tokenIds.filter((id) => !artCache.has(id.toString()));
 
     const FIELDS_PER_TOKEN = 5;
@@ -282,9 +342,9 @@ export function startDashboardServer(opts: DashboardOpts): http.Server {
       { address: miningAgentAddress, abi: MiningAgentAbi, functionName: "mintBlock" as const, args: [tokenId] },
     ]);
 
-    const detailResults = await publicClient.multicall({ contracts: detailContracts });
+    const detailResults = await chunkedMulticall(detailContracts);
 
-    // Batch art URI calls for uncached tokens — use small chunks to avoid RPC response size limits
+    // Batch art URI calls for uncached tokens — small chunks (tokenURI returns ~41KB each)
     const ART_CHUNK_SIZE = 2;
     const artResults: { status: string; result?: unknown; error?: unknown }[] = [];
     for (let i = 0; i < uncachedTokenIds.length; i += ART_CHUNK_SIZE) {
@@ -299,7 +359,6 @@ export function startDashboardServer(opts: DashboardOpts): http.Server {
         const chunkResults = await publicClient.multicall({ contracts: artContracts });
         artResults.push(...chunkResults);
       } catch {
-        // Push failure entries so indexing stays aligned
         for (let j = 0; j < chunk.length; j++) {
           artResults.push({ status: "failure" });
         }
@@ -435,13 +494,14 @@ export function startDashboardServer(opts: DashboardOpts): http.Server {
 
       if (pathname === "/api/wallets") {
         const fleet = url.searchParams.get("fleet");
-        const body = await handleWallets(fleet);
+        const cacheKey = `wallets:${fleet ?? "All"}`;
+        const body = await cachedHandler(cacheKey, () => handleWallets(fleet));
         jsonResponse(res, body);
         return;
       }
 
       if (pathname === "/api/network") {
-        const body = await handleNetwork();
+        const body = await cachedHandler("network", () => handleNetwork());
         jsonResponse(res, body);
         return;
       }
