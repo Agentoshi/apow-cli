@@ -1,7 +1,10 @@
 import { createPublicClient, createWalletClient, http } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { Attribution } from "ox/erc8021";
 
 import { config } from "./config";
+
+const DATA_SUFFIX = Attribution.toDataSuffix({ codes: ["bc_6wfeb1kd"] });
 
 export const publicClient = createPublicClient({
   chain: config.chain,
@@ -17,6 +20,7 @@ export const walletClient = account
       account,
       chain: config.chain,
       transport: http(config.rpcUrl),
+      dataSuffix: DATA_SUFFIX,
     })
   : null;
 
