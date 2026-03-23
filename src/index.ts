@@ -174,8 +174,8 @@ async function setupWizard(): Promise<void> {
 
   // Step 3: LLM
   console.log(`  ${ui.bold("Step 3/3: LLM Provider")}`);
-  const providerInput = await ui.prompt("Provider (openai/anthropic/gemini/ollama/claude-code/codex)", "openai");
-  const provider = (["openai", "anthropic", "gemini", "ollama", "claude-code", "codex"].includes(providerInput) ? providerInput : "openai") as LlmProvider;
+  const providerInput = await ui.prompt("Provider (openai/anthropic/gemini/ollama/deepseek/qwen/claude-code/codex)", "openai");
+  const provider = (["openai", "anthropic", "gemini", "ollama", "deepseek", "qwen", "claude-code", "codex"].includes(providerInput) ? providerInput : "openai") as LlmProvider;
   values.LLM_PROVIDER = provider;
 
   if (provider === "ollama") {
@@ -195,7 +195,7 @@ async function setupWizard(): Promise<void> {
     }
   }
 
-  const defaultModel = provider === "gemini" ? "gemini-2.5-flash" : provider === "anthropic" ? "claude-sonnet-4-5-20250929" : provider === "claude-code" || provider === "codex" ? "default" : "gpt-4o-mini";
+  const defaultModel = provider === "gemini" ? "gemini-2.5-flash" : provider === "anthropic" ? "claude-sonnet-4-5-20250929" : provider === "deepseek" ? "deepseek-chat" : provider === "qwen" ? "qwen-plus" : provider === "claude-code" || provider === "codex" ? "default" : "gpt-4o-mini";
   const model = await ui.prompt("Model", defaultModel);
   values.LLM_MODEL = model;
 

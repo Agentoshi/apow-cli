@@ -301,6 +301,48 @@ async function requestGeminiSolution(prompt: string): Promise<string> {
   return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 }
 
+async function requestDeepSeekSolution(prompt: string): Promise<string> {
+  const client = new OpenAI({
+    apiKey: requireLlmApiKey(),
+    baseURL: "https://api.deepseek.com",
+  });
+  const response = await client.chat.completions.create({
+    model: config.llmModel || "deepseek-chat",
+    temperature: 0.7,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You generate short lowercase word sequences that match exact constraints. Return only the words separated by spaces. Nothing else.",
+      },
+      { role: "user", content: prompt },
+    ],
+  }, { timeout: 15_000 });
+
+  return response.choices[0]?.message.content ?? "";
+}
+
+async function requestQwenSolution(prompt: string): Promise<string> {
+  const client = new OpenAI({
+    apiKey: requireLlmApiKey(),
+    baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  });
+  const response = await client.chat.completions.create({
+    model: config.llmModel || "qwen-plus",
+    temperature: 0.7,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You generate short lowercase word sequences that match exact constraints. Return only the words separated by spaces. Nothing else.",
+      },
+      { role: "user", content: prompt },
+    ],
+  }, { timeout: 15_000 });
+
+  return response.choices[0]?.message.content ?? "";
+}
+
 async function requestClaudeCodeSolution(prompt: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const escaped = prompt.replace(/'/g, "'\\''");
@@ -338,6 +380,10 @@ async function requestProviderSolution(prompt: string): Promise<string> {
       return requestClaudeCodeSolution(prompt);
     case "codex":
       return requestCodexSolution(prompt);
+    case "deepseek":
+      return requestDeepSeekSolution(prompt);
+    case "qwen":
+      return requestQwenSolution(prompt);
     case "openai":
     default:
       return requestOpenAiSolution(prompt);

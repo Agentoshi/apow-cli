@@ -6,7 +6,7 @@ import { base, baseSepolia } from "viem/chains";
 
 loadEnv();
 
-export type LlmProvider = "openai" | "anthropic" | "ollama" | "gemini" | "claude-code" | "codex";
+export type LlmProvider = "openai" | "anthropic" | "ollama" | "gemini" | "claude-code" | "codex" | "deepseek" | "qwen";
 export type ChainName = "base" | "baseSepolia";
 
 export interface AppConfig {
@@ -36,7 +36,7 @@ const EXPENSIVE_MODELS = ["gpt-4o", "gpt-4", "claude-3-opus", "claude-3-5-sonnet
 const CHEAP_OVERRIDES = ["gpt-4o-mini", "gpt-4-mini"];
 
 function normalizeProvider(value?: string): LlmProvider {
-  if (value === "anthropic" || value === "ollama" || value === "openai" || value === "gemini" || value === "claude-code" || value === "codex") {
+  if (value === "anthropic" || value === "ollama" || value === "openai" || value === "gemini" || value === "claude-code" || value === "codex" || value === "deepseek" || value === "qwen") {
     return value;
   }
 
@@ -88,6 +88,8 @@ function resolveLlmApiKey(provider: LlmProvider): string | undefined {
     case "openai": return process.env.OPENAI_API_KEY;
     case "anthropic": return process.env.ANTHROPIC_API_KEY;
     case "gemini": return process.env.GEMINI_API_KEY;
+    case "deepseek": return process.env.DEEPSEEK_API_KEY;
+    case "qwen": return process.env.DASHSCOPE_API_KEY;
     default: return undefined;
   }
 }
@@ -121,7 +123,7 @@ export function requireLlmApiKey(): string {
   }
 
   if (!config.llmApiKey) {
-    const keyNames: Record<string, string> = { openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY", gemini: "GEMINI_API_KEY" };
+    const keyNames: Record<string, string> = { openai: "OPENAI_API_KEY", anthropic: "ANTHROPIC_API_KEY", gemini: "GEMINI_API_KEY", deepseek: "DEEPSEEK_API_KEY", qwen: "DASHSCOPE_API_KEY" };
     const alt = keyNames[config.llmProvider] ?? "";
     throw new Error(`LLM_API_KEY${alt ? ` (or ${alt})` : ""} is required for ${config.llmProvider}.`);
   }
