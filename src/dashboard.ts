@@ -15,7 +15,7 @@ const MiningAgentAbi = MiningAgentAbiJson as Abi;
 const RARITY_LABELS = ["Common", "Uncommon", "Rare", "Epic", "Mythic"] as const;
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 
-const DEFAULT_RPC = "https://mainnet.base.org";
+const DEFAULT_RPC = ""; // No default public RPC — x402 is the default
 const FLEETS_PATH = join(process.env.HOME ?? "", ".apow", "fleets.json");
 
 // --- Types ---
@@ -474,7 +474,7 @@ export function startDashboardServer(opts: DashboardOpts): http.Server {
   }
 
   function handleConfig(): string {
-    const rpcIsDefault = rpcUrl === DEFAULT_RPC;
+    const rpcIsDefault = useX402 || rpcUrl === DEFAULT_RPC;
     const walletCount = getWalletAddresses(walletsPath).length;
     return JSON.stringify({ rpcIsDefault, walletCount });
   }

@@ -81,8 +81,8 @@ const patterns: Array<{
     test: (m) => /\b402\b/.test(m) || m.toLowerCase().includes("x402") || (m.toLowerCase().includes("insufficient") && m.toLowerCase().includes("usdc")),
     classify: () => ({
       category: "transient",
-      userMessage: "x402 RPC payment failed — check USDC balance on Base",
-      recovery: "Send USDC to your wallet on Base, or set RPC_URL in .env to use a free RPC",
+      userMessage: "QuickNode x402 credit purchase failed — check USDC balance on Base",
+      recovery: "Send USDC to your wallet on Base (~$10 for ~1M RPC calls), or set RPC_URL in .env to use a custom RPC",
     }),
   },
   {

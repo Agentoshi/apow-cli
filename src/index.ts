@@ -150,10 +150,27 @@ async function setupWizard(): Promise<void> {
 
   // Step 2: RPC
   console.log(`  ${ui.bold("Step 2/3: RPC")}`);
-  console.log(`  ${ui.dim("Default: Alchemy x402 — premium RPC paid automatically")}`);
-  console.log(`  ${ui.dim("via USDC in your mining wallet. No API key needed.")}`);
-  console.log(`  ${ui.dim("To use a custom RPC, set RPC_URL in .env after setup.")}`);
-  ui.ok("RPC: Alchemy x402 (default)");
+  console.log(`  ${ui.dim("You need a Base RPC endpoint. Two options:")}`);
+  console.log(`  ${ui.dim("  1. Bring your own (free from Alchemy, QuickNode, etc.)")}`);
+  console.log(`  ${ui.dim("  2. Auto-pay via QuickNode x402 ($10 USDC for ~1M calls)")}`);
+  const hasRpc = await ui.confirm("Do you have a Base RPC URL?");
+
+  if (hasRpc) {
+    const rpcUrl = await ui.prompt("RPC URL");
+    if (rpcUrl) {
+      values.RPC_URL = rpcUrl;
+      ui.ok(`RPC: Custom (${rpcUrl.slice(0, 40)}${rpcUrl.length > 40 ? "..." : ""})`);
+    } else {
+      ui.warn("No URL provided — using QuickNode x402");
+      values.USE_X402 = "true";
+      ui.ok("RPC: QuickNode x402 ($10 USDC for ~1M calls)");
+    }
+  } else {
+    values.USE_X402 = "true";
+    console.log(`  ${ui.dim("QuickNode x402 will charge $10 USDC from your mining wallet")}`);
+    console.log(`  ${ui.dim("for ~1M RPC calls. No API key or account needed.")}`);
+    ui.ok("RPC: QuickNode x402 ($10 USDC for ~1M calls)");
+  }
   console.log("");
 
   // Step 3: LLM (for minting)

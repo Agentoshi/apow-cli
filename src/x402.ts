@@ -1,58 +1,55 @@
-import { privateKeyToAccount } from "viem/accounts";
 import { custom, type Transport } from "viem";
+import type { QuicknodeX402Client } from "@quicknode/x402";
 
-const ALCHEMY_X402_BASE = "https://x402.alchemy.com/rpc/base-mainnet";
+const QUICKNODE_BASE = "https://x402.quicknode.com";
+const BASE_MAINNET = "eip155:8453";
 
-let _paidFetch: typeof fetch | null = null;
+let _client: QuicknodeX402Client | null = null;
 
-/* eslint-disable @typescript-eslint/no-require-imports */
+async function getClient(privateKey: `0x${string}`): Promise<QuicknodeX402Client> {
+  if (_client && !_client.isTokenExpired()) return _client;
 
-function getPaidFetchSync(privateKey: `0x${string}`): typeof fetch {
-  if (_paidFetch) return _paidFetch;
-
-  // Use require() to avoid subpath module resolution issues with CommonJS.
-  // The x402 packages use `exports` maps which require "node16"/"bundler"
-  // moduleResolution — but this project uses classic "Node" resolution.
-  const { x402Client } = require("@x402/core/client") as {
-    x402Client: new () => { register(network: string, client: unknown): unknown };
-  };
-  const { ExactEvmScheme } = require("@x402/evm/exact/client") as {
-    ExactEvmScheme: new (signer: unknown) => unknown;
-  };
-  const { toClientEvmSigner } = require("@x402/evm") as {
-    toClientEvmSigner: (account: unknown) => unknown;
-  };
-  const { wrapFetchWithPayment } = require("@x402/fetch") as {
-    wrapFetchWithPayment: (f: typeof fetch, client: unknown) => typeof fetch;
-  };
-
-  const account = privateKeyToAccount(privateKey);
-  const signer = toClientEvmSigner(account);
-  const client = new x402Client();
-  client.register("eip155:*", new ExactEvmScheme(signer));
-  _paidFetch = wrapFetchWithPayment(fetch, client);
-  return _paidFetch;
+  const { createQuicknodeX402Client } = await import("@quicknode/x402");
+  _client = await createQuicknodeX402Client({
+    baseUrl: QUICKNODE_BASE,
+    network: BASE_MAINNET,
+    evmPrivateKey: privateKey,
+    preAuth: true,
+    // paymentModel defaults to 'credit-drawdown' — no per-request payments
+  });
+  return _client;
 }
 
 export function createX402Transport(privateKey: `0x${string}`): Transport {
   return custom({
     async request({ method, params }) {
-      const paidFetch = getPaidFetchSync(privateKey);
-      const response = await paidFetch(ALCHEMY_X402_BASE, {
+      const client = await getClient(privateKey);
+      const response = await client.fetch(`${QUICKNODE_BASE}/base-mainnet`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", method, params, id: 1 }),
       });
+
+      if (response.status === 402) {
+        throw new Error("x402 payment failed — insufficient USDC balance on Base");
+      }
+      if (!response.ok) {
+        throw new Error(`QuickNode x402 HTTP ${response.status}: ${response.statusText}`);
+      }
+
       const data = (await response.json()) as {
         result?: unknown;
-        error?: { message: string };
+        error?: { message: string } | string;
       };
-      if (data.error) throw new Error(data.error.message);
+      if (data.error) {
+        const msg = typeof data.error === "string" ? data.error : data.error.message;
+        throw new Error(msg);
+      }
       return data.result;
     },
   });
 }
 
 export function resetX402(): void {
-  _paidFetch = null;
+  _client = null;
 }

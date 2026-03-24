@@ -4,8 +4,7 @@ import { base } from "viem/chains";
 
 import agentCoinAbiJson from "./abi/AgentCoin.json";
 import { config } from "./config";
-import { publicClient, account, reinitClients } from "./wallet";
-import { resetX402 } from "./x402";
+import { publicClient, account } from "./wallet";
 import * as ui from "./ui";
 
 const agentCoinAbi = agentCoinAbiJson as Abi;
@@ -46,28 +45,17 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
     results.push({ label: "Contract addresses configured", passed: true });
   }
 
-  // Check 2: RPC reachable + chain ID
-  try {
-    const chainId = await publicClient.getChainId();
-    const expectedId = config.chain.id;
-    if (chainId !== expectedId) {
-      results.push({
-        label: `RPC chain mismatch — expected ${expectedId}, got ${chainId}`,
-        passed: false,
-        fix: "Update RPC_URL to point to the correct network",
-      });
-    } else {
-      results.push({ label: `RPC connected — ${config.chain.name}`, passed: true });
-    }
-  } catch {
+  // Check: RPC configured (either RPC_URL or USE_X402)
+  if (!config.useX402 && !config.rpcUrl) {
     results.push({
-      label: `RPC unreachable — could not connect to ${config.rpcUrl}`,
+      label: "No RPC configured",
       passed: false,
-      fix: "Check internet connection or update RPC_URL in .env",
+      fix: "Run `apow setup` to configure RPC, or set RPC_URL or USE_X402=true in .env",
     });
   }
 
-  // Check x402: USDC balance when x402 mode is active
+  // Check x402: USDC balance BEFORE RPC check (can't use x402 without USDC)
+  let x402Funded = false;
   if (config.useX402 && account) {
     try {
       // Use a separate lightweight client to avoid chicken-and-egg
@@ -84,25 +72,50 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
       })) as bigint;
 
       if (usdcBalance === 0n) {
-        ui.warn("No USDC balance — x402 RPC requires USDC on Base for payment");
-        ui.hint(`Send USDC to ${account.address} on Base, or set RPC_URL in .env to use a free RPC`);
-        ui.hint("Falling back to public RPC (https://mainnet.base.org)");
-        config.useX402 = false;
-        resetX402();
-        reinitClients();
+        results.push({
+          label: "No USDC balance — QuickNode x402 requires USDC on Base",
+          passed: false,
+          fix: `Send USDC to ${account.address} on Base (~$10 for ~1M RPC calls). Run \`apow fund\` to bridge from Solana.`,
+        });
       } else {
+        x402Funded = true;
         const formatted = formatUnits(usdcBalance, USDC_DECIMALS);
         results.push({
-          label: `RPC: Alchemy x402 (${formatted} USDC available)`,
+          label: `RPC: QuickNode x402 (${formatted} USDC available)`,
           passed: true,
         });
       }
     } catch {
-      // USDC check failed — fall back silently
-      ui.warn("Could not check USDC balance — falling back to public RPC");
-      config.useX402 = false;
-      resetX402();
-      reinitClients();
+      // USDC check failed — can't verify, warn but don't block
+      x402Funded = true; // optimistic — let the RPC check determine reachability
+      ui.warn("Could not check USDC balance — QuickNode x402 may fail if wallet has no USDC");
+    }
+  }
+
+  // Check 2: RPC reachable + chain ID
+  // Skip when: no RPC configured at all, or x402 active but unfunded
+  const hasRpc = config.useX402 || !!config.rpcUrl;
+  if (hasRpc && (!config.useX402 || x402Funded)) {
+    try {
+      const chainId = await publicClient.getChainId();
+      const expectedId = config.chain.id;
+      if (chainId !== expectedId) {
+        results.push({
+          label: `RPC chain mismatch — expected ${expectedId}, got ${chainId}`,
+          passed: false,
+          fix: "Update RPC_URL to point to the correct network",
+        });
+      } else {
+        results.push({ label: `RPC connected — ${config.chain.name}`, passed: true });
+      }
+    } catch {
+      results.push({
+        label: `RPC unreachable — could not connect to ${config.useX402 ? "QuickNode x402" : config.rpcUrl}`,
+        passed: false,
+        fix: config.useX402
+          ? "Check internet connection and USDC balance, or set RPC_URL in .env for a custom RPC"
+          : "Check internet connection or update RPC_URL in .env",
+      });
     }
   }
 

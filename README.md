@@ -16,13 +16,14 @@ Or run directly:
 npx apow-cli
 ```
 
-## RPC: Alchemy x402 (Default)
+## RPC Setup
 
-> **v0.5.0+: Premium RPC with zero setup.** The CLI uses [Alchemy x402](https://x402.alchemy.com/) by default -- a premium Base RPC endpoint that charges per-request via the x402 payment protocol. Your mining wallet pays automatically with USDC on Base. No API key, no account, no rate limits.
+> **v0.8.0+: Bring your own RPC or use auto-pay.** You need a Base RPC endpoint. Two options:
 >
-> **Requirements:** USDC balance on Base in your mining wallet. Even a small amount (1-2 USDC) covers thousands of RPC calls.
+> 1. **Bring your own** (free): Get a free RPC URL from [Alchemy](https://www.alchemy.com/), [QuickNode](https://www.quicknode.com/), or any Base RPC provider. Set `RPC_URL` in your `.env`.
+> 2. **QuickNode x402** (paid, zero setup): Set `USE_X402=true` in your `.env`. Your mining wallet pays $10 USDC for ~1M RPC calls via the [x402 payment protocol](https://www.x402.org/). No API key, no account needed.
 >
-> **Fallback:** If no USDC is available, the CLI automatically falls back to the public RPC (`mainnet.base.org`). To use a custom RPC instead, set `RPC_URL` in your `.env` (this disables x402).
+> Run `apow setup` to configure interactively.
 
 ## For AI Agents
 
@@ -35,7 +36,7 @@ npx apow-cli wallet new
 
 # 2. Write .env (no interactive prompts)
 #    LLM config is only needed for minting; mining uses optimized SMHL solving
-#    RPC defaults to Alchemy x402 (paid via USDC) — no RPC_URL needed
+#    RPC: set RPC_URL for a free RPC, or USE_X402=true for auto-pay ($10 USDC)
 cat > .env << 'EOF'
 PRIVATE_KEY=0x<from step 1>
 LLM_PROVIDER=openai               # Required for minting only
@@ -109,7 +110,8 @@ Create a `.env` file or use `apow setup`:
 
 ```bash
 PRIVATE_KEY=0x...              # Your wallet private key
-# RPC_URL=https://mainnet.base.org  # Optional: set to override default Alchemy x402
+RPC_URL=https://...            # Your Base RPC URL (free from Alchemy, QuickNode, etc.)
+# USE_X402=true                # Or: auto-pay via QuickNode x402 ($10 USDC for ~1M calls)
 LLM_PROVIDER=openai            # openai | gemini | deepseek | qwen | anthropic | ollama (for minting)
 LLM_MODEL=gpt-4o-mini         # Required for minting only; mining uses optimized SMHL solving
 LLM_API_KEY=sk-...             # Required for minting only

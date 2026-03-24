@@ -27,7 +27,6 @@ export interface AppConfig {
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as Address;
 
-const DEFAULT_RPC_URL = "https://mainnet.base.org";
 const DEFAULT_LLM_PROVIDER: LlmProvider = "openai";
 const DEFAULT_LLM_MODEL = "gpt-4o-mini";
 const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
@@ -52,7 +51,7 @@ function resolveChainName(): ChainName {
     return envChain;
   }
 
-  const rpcUrl = process.env.RPC_URL ?? DEFAULT_RPC_URL;
+  const rpcUrl = process.env.RPC_URL ?? "";
   if (rpcUrl.toLowerCase().includes("sepolia")) {
     return "baseSepolia";
   }
@@ -101,8 +100,8 @@ const chainName = resolveChainName();
 
 export const config: AppConfig = {
   privateKey: parsePrivateKey(process.env.PRIVATE_KEY),
-  rpcUrl: process.env.RPC_URL ?? DEFAULT_RPC_URL,
-  useX402: !process.env.RPC_URL,
+  rpcUrl: process.env.RPC_URL ?? "",
+  useX402: process.env.USE_X402 === "true",
   llmProvider: normalizeProvider(process.env.LLM_PROVIDER),
   llmApiKey: resolveLlmApiKey(normalizeProvider(process.env.LLM_PROVIDER)),
   llmModel: process.env.LLM_MODEL ?? DEFAULT_LLM_MODEL,
