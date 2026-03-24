@@ -1,5 +1,5 @@
 // Squid Router bridge — deposit address flow.
-// Supports SOL→Base and Ethereum→Base via Chainflip multi-hop (~1-3 minutes).
+// Supports SOL→Base via Chainflip multi-hop (~1-3 minutes).
 // Requires SQUID_INTEGRATOR_ID (free, apply at squidrouter.com).
 
 import { CHAIN_IDS, TOKENS } from "./constants";
@@ -17,33 +17,17 @@ export interface SquidRoute {
 
 export const SQUID_ROUTES = {
   sol_to_eth: {
-    fromChain: CHAIN_IDS.solana.squid,
+    fromChain: CHAIN_IDS.solana,
     fromToken: TOKENS.solana.nativeWrapped,
-    toChain: CHAIN_IDS.base.squid,
+    toChain: CHAIN_IDS.base,
     toToken: TOKENS.base.nativeSquid,
     srcDecimals: 9,
     dstDecimals: 18,
   },
   sol_usdc_to_base_usdc: {
-    fromChain: CHAIN_IDS.solana.squid,
+    fromChain: CHAIN_IDS.solana,
     fromToken: TOKENS.solana.usdc,
-    toChain: CHAIN_IDS.base.squid,
-    toToken: TOKENS.base.usdc,
-    srcDecimals: 6,
-    dstDecimals: 6,
-  },
-  eth_to_base_eth: {
-    fromChain: CHAIN_IDS.ethereum.squid,
-    fromToken: TOKENS.ethereum.nativeSquid,
-    toChain: CHAIN_IDS.base.squid,
-    toToken: TOKENS.base.nativeSquid,
-    srcDecimals: 18,
-    dstDecimals: 18,
-  },
-  eth_usdc_to_base_usdc: {
-    fromChain: CHAIN_IDS.ethereum.squid,
-    fromToken: TOKENS.ethereum.usdc,
-    toChain: CHAIN_IDS.base.squid,
+    toChain: CHAIN_IDS.base,
     toToken: TOKENS.base.usdc,
     srcDecimals: 6,
     dstDecimals: 6,
@@ -61,9 +45,8 @@ function getIntegratorId(): string {
   const id = process.env.SQUID_INTEGRATOR_ID;
   if (!id) {
     throw new Error(
-      "SQUID_INTEGRATOR_ID is required for the deposit address flow.\n" +
-        "Get one free at https://app.squidrouter.com/\n" +
-        "Or use direct signing instead: apow fund --chain solana --key <base58>",
+      "SQUID_INTEGRATOR_ID is required for bridging from Solana.\n" +
+        "Get one free at https://app.squidrouter.com/",
     );
   }
   return id;

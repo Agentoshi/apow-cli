@@ -45,7 +45,6 @@ EOF
 
 # 3. Fund the wallet (bridge from any chain, auto-splits into ETH + USDC)
 npx apow-cli fund --chain solana --token sol    # bridge SOL → ETH+USDC on Base
-npx apow-cli fund --chain ethereum --token eth  # bridge ETH → ETH+USDC on Base
 # Or send ETH/USDC on Base directly
 
 # 4. Mint a mining rig NFT (proves agent identity via LLM, one-time)
@@ -92,7 +91,7 @@ npx apow-cli mine
 | Command | Description |
 |---------|-------------|
 | `apow setup` | Interactive setup wizard: configure wallet, RPC, and LLM |
-| `apow fund` | Fund your wallet: bridge from Solana/Ethereum, swap on Base, auto-split ETH+USDC |
+| `apow fund` | Fund your wallet: bridge from Solana or send on Base, auto-split ETH+USDC |
 | `apow wallet new` | Generate a new mining wallet |
 | `apow wallet show` | Show configured wallet address |
 | `apow wallet export` | Export your wallet's private key |
@@ -116,8 +115,7 @@ LLM_MODEL=gpt-4o-mini         # Required for minting only; mining uses optimized
 LLM_API_KEY=sk-...             # Required for minting only
 # Bridging (only for `apow fund`)
 # SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
-# ETHEREUM_RPC_URL=https://ethereum-rpc.publicnode.com    # free, for `--chain ethereum` only
-# SQUID_INTEGRATOR_ID=          # free, get at squidrouter.com (deposit address flow only)
+# SQUID_INTEGRATOR_ID=          # free, get at squidrouter.com
 # Contract addresses (defaults built-in, override only if needed)
 # MINING_AGENT_ADDRESS=0xB7caD3ca5F2BD8aEC2Eb67d6E8D448099B3bC03D
 # AGENT_COIN_ADDRESS=0x12577CF0D8a07363224D6909c54C056A183e13b3
@@ -138,19 +136,14 @@ An LLM is required to mint your Mining Rig NFT (one-time identity verification).
 | Anthropic | `claude-sonnet-4-5-20250929` | ~$0.005 | Works but slower |
 | Ollama | `llama3.1` | Free | Local GPU required |
 
-## Funding (v0.6.0+)
+## Funding (v0.7.0+)
 
-Mining requires two assets on Base: **ETH** (gas) and **USDC** (x402 RPC). The `fund` command accepts deposits in 6 forms across 3 chains, auto-bridges to Base, and auto-splits into both:
+Mining requires two assets on Base: **ETH** (gas) and **USDC** (x402 RPC). The `fund` command bridges from Solana or accepts deposits on Base, and auto-splits into both:
 
 ```bash
-# From Solana
+# From Solana (deposit address — send from any wallet, QR code included)
 apow fund --chain solana --token sol              # bridge SOL → ETH, auto-swap portion to USDC
 apow fund --chain solana --token usdc             # bridge USDC, auto-swap portion to ETH
-apow fund --chain solana --token sol --key <b58>  # direct signing (fast, ~20s)
-
-# From Ethereum mainnet
-apow fund --chain ethereum --token eth            # bridge ETH → Base, auto-swap portion to USDC
-apow fund --chain ethereum --token usdc           # bridge USDC → Base, auto-swap portion to ETH
 
 # Already on Base
 apow fund --chain base --token eth                # show address, wait for deposit, auto-split
@@ -159,6 +152,8 @@ apow fund --chain base --token usdc               # show address, wait for depos
 # Skip auto-split (keep single asset)
 apow fund --chain base --no-swap
 ```
+
+**Solana bridging:** Uses [Squid Router](https://squidrouter.com/) (Chainflip). Generates a one-time deposit address with QR code — send from Phantom, Backpack, or any Solana wallet. Requires `SQUID_INTEGRATOR_ID` in `.env` (free at [squidrouter.com](https://app.squidrouter.com/)).
 
 **Auto-split targets:** 0.003 ETH (gas for ~100 mine txns) + 2.00 USDC (~100K x402 RPC calls). If both are already met, the CLI skips the swap.
 

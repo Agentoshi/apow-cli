@@ -1,16 +1,13 @@
 // Fund command — unified funding for mining on Base.
-// Accepts deposits in 6 forms across 3 chains, auto-bridges to Base,
+// Accepts deposits from Solana (via Squid Router bridge) or Base (direct send),
 // auto-splits into ETH (gas) + USDC (x402 RPC).
 //
 // Deposit types:
 //   1. Solana SOL     → bridge → ETH on Base → swap portion to USDC
 //   2. Solana USDC    → bridge → USDC on Base → swap portion to ETH
-//   3. Ethereum ETH   → bridge → ETH on Base → swap portion to USDC
-//   4. Ethereum USDC  → bridge → USDC on Base → swap portion to ETH
-//   5. Base ETH       → (already there) → swap portion to USDC
-//   6. Base USDC      → (already there) → swap portion to ETH
+//   3. Base ETH       → (already there) → swap portion to USDC
+//   4. Base USDC      → (already there) → swap portion to ETH
 
-import type { Hex } from "viem";
 import { formatEther, formatUnits, parseEther, parseUnits } from "viem";
 
 import {
@@ -23,7 +20,6 @@ import {
   SLIPPAGE_BPS,
   TOKENS,
 } from "./bridge/constants";
-import { ROUTES, bridgeFromSolana, bridgeFromEvm, pollOrderStatus } from "./bridge/debridge";
 import { SQUID_ROUTES, getDepositAddress, pollBridgeStatus } from "./bridge/squid";
 import { getUsdcBalance, swapEthToUsdc, swapUsdcToEth } from "./bridge/uniswap";
 import { account, getEthBalance } from "./wallet";
@@ -33,7 +29,6 @@ import * as ui from "./ui";
 export interface FundOptions {
   chain?: string;
   token?: string;
-  key?: string;
   amount?: string;
   swap?: boolean; // commander uses --no-swap which produces swap=false
 }
@@ -212,111 +207,10 @@ async function showFinalBalances(): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Solana direct bridge (deBridge DLN)
+// Solana fund (Squid Router deposit address)
 // ---------------------------------------------------------------------------
 
-async function runSolanaDirectBridge(
-  solanaKeyInput: string,
-  baseAddress: string,
-  sourceToken: SourceToken,
-  targetEth: number,
-): Promise<void> {
-  const solanaSpinner = ui.spinner("Checking Solana balance...");
-
-  const solana = await import("./bridge/solana");
-
-  let kp: { keypair: any; publicKey: string };
-  try {
-    kp = await solana.parseSolanaKey(solanaKeyInput);
-  } catch (err) {
-    solanaSpinner.fail("Invalid Solana key");
-    throw err;
-  }
-
-  if (sourceToken === "usdc") {
-    const usdcBal = await solana.getSplTokenBalance(kp.publicKey, TOKENS.solana.usdc);
-    solanaSpinner.stop(`Solana USDC balance: ${usdcBal.toFixed(2)} USDC`);
-
-    const priceSpinner = ui.spinner("Fetching prices...");
-    const prices = await fetchPrices();
-    priceSpinner.stop(`ETH price: $${prices.ethPriceUsd.toFixed(0)}`);
-
-    const usdcAmount = targetEth * prices.ethPriceUsd * 1.1; // 10% buffer
-    if (usdcBal < usdcAmount) {
-      ui.error(`Insufficient USDC. Need ~${usdcAmount.toFixed(2)} USDC, have ${usdcBal.toFixed(2)} USDC.`);
-      return;
-    }
-
-    console.log("");
-    ui.table([
-      ["Bridging", `${usdcAmount.toFixed(2)} USDC → USDC on Base`],
-      ["Via", "deBridge DLN (~20 seconds)"],
-      ["From", `${kp.publicKey.slice(0, 4)}...${kp.publicKey.slice(-4)}`],
-      ["To", `${baseAddress.slice(0, 6)}...${baseAddress.slice(-4)}`],
-    ]);
-    console.log("");
-
-    const proceed = await ui.confirm("Confirm bridge?");
-    if (!proceed) { console.log("  Cancelled."); return; }
-
-    const bridgeSpinner = ui.spinner("Signing bridge transaction...");
-    const result = await bridgeFromSolana(kp.keypair, baseAddress, usdcAmount, ROUTES.sol_usdc_to_base_usdc);
-    bridgeSpinner.stop(`Submitted! Order: ${result.orderId.slice(0, 12)}...`);
-
-    const pollSpinner = ui.spinner("Waiting for bridge fulfillment... (~20s)");
-    const fulfillment = await pollOrderStatus(result.orderId, (s) => pollSpinner.update(`Bridge status: ${s}`));
-    pollSpinner.stop("Bridge complete! USDC arrived on Base");
-
-    await autoSplit("usdc", prices, false);
-    await showFinalBalances();
-  } else {
-    // SOL → ETH
-    const balance = await solana.getSolanaBalance(kp.publicKey);
-    solanaSpinner.stop(`Solana balance: ${balance.toFixed(4)} SOL`);
-
-    const priceSpinner = ui.spinner("Fetching prices...");
-    const prices = await fetchPrices();
-    const solAmount = amountNeededForEth(targetEth, prices.solPriceUsd, prices.ethPriceUsd);
-    priceSpinner.stop(`SOL/ETH rate: ${prices.solPerEth.toFixed(1)} SOL = 1 ETH`);
-
-    if (balance < solAmount) {
-      ui.error(`Insufficient SOL. Need ~${solAmount.toFixed(4)} SOL, have ${balance.toFixed(4)} SOL.`);
-      return;
-    }
-
-    console.log("");
-    ui.table([
-      ["Bridging", `${solAmount.toFixed(4)} SOL → ~${targetEth.toFixed(4)} ETH on Base`],
-      ["Via", "deBridge DLN (~20 seconds)"],
-      ["From", `${kp.publicKey.slice(0, 4)}...${kp.publicKey.slice(-4)}`],
-      ["To", `${baseAddress.slice(0, 6)}...${baseAddress.slice(-4)}`],
-    ]);
-    console.log("");
-
-    const proceed = await ui.confirm("Confirm bridge?");
-    if (!proceed) { console.log("  Cancelled."); return; }
-
-    const bridgeSpinner = ui.spinner("Signing bridge transaction...");
-    const result = await bridgeFromSolana(kp.keypair, baseAddress, solAmount, ROUTES.sol_to_eth);
-    bridgeSpinner.stop(`Submitted! Order: ${result.orderId.slice(0, 12)}...`);
-
-    const pollSpinner = ui.spinner("Waiting for bridge fulfillment... (~20s)");
-    const fulfillment = await pollOrderStatus(result.orderId, (s) => pollSpinner.update(`Bridge status: ${s}`));
-    const received = fulfillment.received
-      ? (Number(fulfillment.received) / 1e18).toFixed(6)
-      : `~${targetEth.toFixed(4)}`;
-    pollSpinner.stop(`Bridge complete! ${received} ETH arrived on Base`);
-
-    await autoSplit("eth", prices, false);
-    await showFinalBalances();
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Solana deposit address bridge (Squid Router)
-// ---------------------------------------------------------------------------
-
-async function runSolanaDepositBridge(
+async function runSolanaFund(
   baseAddress: string,
   sourceToken: SourceToken,
   targetEth: number,
@@ -440,143 +334,6 @@ async function runSolanaDepositBridge(
 }
 
 // ---------------------------------------------------------------------------
-// Ethereum direct bridge (deBridge DLN)
-// ---------------------------------------------------------------------------
-
-async function runEthereumDirectBridge(
-  baseAddress: string,
-  sourceToken: SourceToken,
-  targetEth: number,
-): Promise<void> {
-  if (!config.privateKey) {
-    ui.error("No PRIVATE_KEY configured. Your wallet key is used on Ethereum mainnet too.");
-    return;
-  }
-
-  const priceSpinner = ui.spinner("Fetching prices...");
-  const prices = await fetchPrices();
-  priceSpinner.stop(`ETH price: $${prices.ethPriceUsd.toFixed(0)}`);
-
-  const route = sourceToken === "usdc"
-    ? ROUTES.eth_usdc_to_base_usdc
-    : ROUTES.eth_to_base_eth;
-
-  const amount = sourceToken === "usdc"
-    ? targetEth * prices.ethPriceUsd * 1.1
-    : targetEth * 1.1;
-
-  const tokenLabel = sourceToken === "usdc" ? "USDC" : "ETH";
-  const receivedLabel = sourceToken === "usdc" ? "USDC" : "ETH";
-
-  console.log("");
-  ui.table([
-    ["Bridging", `${amount.toFixed(sourceToken === "usdc" ? 2 : 6)} ${tokenLabel} → ${receivedLabel} on Base`],
-    ["Via", "deBridge DLN (~20 seconds)"],
-    ["From", `Ethereum mainnet (${baseAddress.slice(0, 6)}...${baseAddress.slice(-4)})`],
-    ["To", `Base (same address)`],
-  ]);
-  console.log("");
-
-  const proceed = await ui.confirm("Confirm bridge?");
-  if (!proceed) { console.log("  Cancelled."); return; }
-
-  const bridgeSpinner = ui.spinner("Signing bridge transaction on Ethereum...");
-  try {
-    const result = await bridgeFromEvm(config.privateKey, baseAddress, amount, route);
-    bridgeSpinner.stop(`Submitted! Order: ${result.orderId.slice(0, 12)}...`);
-
-    const pollSpinner = ui.spinner("Waiting for bridge fulfillment... (~20s)");
-    const fulfillment = await pollOrderStatus(result.orderId, (s) => pollSpinner.update(`Bridge status: ${s}`));
-    pollSpinner.stop(`Bridge complete! ${receivedLabel} arrived on Base`);
-
-    const outputAsset = bridgeOutputAsset(sourceToken);
-    await autoSplit(outputAsset, prices, false);
-    await showFinalBalances();
-  } catch (err) {
-    bridgeSpinner.fail("Bridge failed");
-    throw err;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Ethereum deposit address bridge (Squid Router)
-// ---------------------------------------------------------------------------
-
-async function runEthereumDepositBridge(
-  baseAddress: string,
-  sourceToken: SourceToken,
-  targetEth: number,
-): Promise<void> {
-  const priceSpinner = ui.spinner("Fetching prices...");
-  const prices = await fetchPrices();
-  priceSpinner.stop(`ETH price: $${prices.ethPriceUsd.toFixed(0)}`);
-
-  const route = sourceToken === "usdc"
-    ? SQUID_ROUTES.eth_usdc_to_base_usdc
-    : SQUID_ROUTES.eth_to_base_eth;
-
-  const amount = sourceToken === "usdc"
-    ? targetEth * prices.ethPriceUsd * 1.1
-    : targetEth * 1.1;
-
-  const tokenLabel = sourceToken === "usdc" ? "USDC" : "ETH";
-
-  const addrSpinner = ui.spinner("Generating deposit address...");
-  const squid = await import("./bridge/squid");
-
-  let deposit: Awaited<ReturnType<typeof squid.getDepositAddress>>;
-  try {
-    deposit = await squid.getDepositAddress(baseAddress, amount, route);
-  } catch (err) {
-    addrSpinner.fail("Failed to get deposit address");
-    throw err;
-  }
-  addrSpinner.stop("Deposit address ready");
-
-  console.log("");
-  console.log(`  ${ui.bold(`Send ${tokenLabel} on Ethereum mainnet to:`)}`);
-  console.log("");
-  console.log(`  ${ui.cyan(deposit.depositAddress)}`);
-  console.log("");
-
-  await showQrCode(deposit.depositAddress);
-
-  console.log("");
-  ui.table([
-    ["Amount", `~${amount.toFixed(sourceToken === "usdc" ? 2 : 6)} ${tokenLabel}`],
-    ["Network", "Ethereum mainnet"],
-    ["You'll receive", `~${deposit.expectedReceive} ${sourceToken === "usdc" ? "USDC" : "ETH"} on Base`],
-    ["Bridge", "Squid Router (Chainflip)"],
-    ["Time", "~1-3 minutes"],
-  ]);
-  console.log("");
-
-  if (deposit.expiresAt) {
-    ui.warn(`Deposit address expires: ${deposit.expiresAt}`);
-    console.log("");
-  }
-
-  // Wait for user to send manually — poll Squid status directly
-  const bridgeSpinner = ui.spinner(`Send ${tokenLabel} and waiting for bridge... (Ctrl+C to cancel)`);
-
-  // For Ethereum deposits, we rely on Squid status API rather than polling an RPC
-  const result = await pollBridgeStatus(
-    deposit.requestId,
-    route.dstDecimals,
-    (status) => bridgeSpinner.update(`Bridge status: ${status}`),
-    900_000, // 15 min for Ethereum (slower block times)
-  );
-
-  const received = result.received || deposit.expectedReceive;
-  const receivedAsset = sourceToken === "usdc" ? "USDC" : "ETH";
-  bridgeSpinner.stop(`Bridge complete! ${received} ${receivedAsset} arrived`);
-
-  const outputAsset = bridgeOutputAsset(sourceToken);
-  await autoSplit(outputAsset, prices, false);
-  await showFinalBalances();
-}
-
-// ---------------------------------------------------------------------------
 // Base manual send (already on the right chain)
 // ---------------------------------------------------------------------------
 
@@ -658,16 +415,11 @@ async function runBaseFund(
 async function selectSourceChain(): Promise<SourceChain> {
   console.log("  Where are your funds?");
   console.log(`    ${ui.cyan("1.")} Solana (SOL or USDC)`);
-  console.log(`    ${ui.cyan("2.")} Ethereum mainnet (ETH or USDC)`);
-  console.log(`    ${ui.cyan("3.")} Base (send ETH or USDC manually)`);
+  console.log(`    ${ui.cyan("2.")} Base (send ETH or USDC directly)`);
   console.log("");
 
   const choice = await ui.prompt("Choice", "1");
-  switch (choice) {
-    case "2": return "ethereum";
-    case "3": return "base";
-    default: return "solana";
-  }
+  return choice === "2" ? "base" : "solana";
 }
 
 async function selectSourceToken(chain: SourceChain): Promise<SourceToken> {
@@ -686,7 +438,6 @@ function parseSourceChain(value?: string): SourceChain | undefined {
   if (!value) return undefined;
   const v = value.toLowerCase();
   if (v === "solana" || v === "sol") return "solana";
-  if (v === "ethereum" || v === "eth") return "ethereum";
   if (v === "base") return "base";
   return undefined;
 }
@@ -758,40 +509,7 @@ export async function runFundFlow(options: FundOptions): Promise<void> {
   // Route to the appropriate flow
   switch (chain) {
     case "solana": {
-      if (options.key) {
-        await runSolanaDirectBridge(options.key, baseAddress, token, targetEth);
-      } else {
-        console.log("");
-        console.log("  Bridge method:");
-        console.log(`    ${ui.cyan("A.")} Direct signing (~20s, need Solana private key)`);
-        console.log(`    ${ui.cyan("B.")} Deposit address (~1-3 min, send from any wallet)`);
-        console.log("");
-
-        const method = await ui.prompt("Choice", "A");
-        if (method.toUpperCase() === "A") {
-          const key = await ui.promptSecret("Solana private key (base58)");
-          if (!key) { ui.error("No key provided."); return; }
-          await runSolanaDirectBridge(key, baseAddress, token, targetEth);
-        } else {
-          await runSolanaDepositBridge(baseAddress, token, targetEth);
-        }
-      }
-      break;
-    }
-
-    case "ethereum": {
-      console.log("");
-      console.log("  Bridge method:");
-      console.log(`    ${ui.cyan("A.")} Direct signing (~20s, uses your PRIVATE_KEY on mainnet)`);
-      console.log(`    ${ui.cyan("B.")} Deposit address (~1-3 min, send from any wallet)`);
-      console.log("");
-
-      const method = await ui.prompt("Choice", "A");
-      if (method.toUpperCase() === "A") {
-        await runEthereumDirectBridge(baseAddress, token, targetEth);
-      } else {
-        await runEthereumDepositBridge(baseAddress, token, targetEth);
-      }
+      await runSolanaFund(baseAddress, token, targetEth);
       break;
     }
 

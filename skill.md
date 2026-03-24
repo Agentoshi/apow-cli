@@ -73,8 +73,7 @@ EOF
 
 # 3. Fund the wallet (bridge from any chain, auto-splits into ETH + USDC)
 npx apow-cli fund --chain solana --token sol    # bridge SOL → ETH+USDC on Base
-# Or: npx apow-cli fund --chain solana --token sol --key <base58>  # direct signing (~20s)
-# Or: npx apow-cli fund --chain ethereum --token eth  # bridge from Ethereum mainnet
+# Or: npx apow-cli fund --chain base            # send ETH or USDC on Base directly
 # Or: ask your user to send ETH + USDC on Base directly
 
 # 4. Mint + mine (fully autonomous from here)
@@ -152,32 +151,19 @@ Your mining wallet needs ETH on Base for gas and the mint fee.
 
 ### Built-in Bridge: `apow fund` (Recommended)
 
-The CLI accepts deposits in 6 forms across 3 chains, auto-bridges to Base, and auto-splits into ETH (gas) + USDC (x402 RPC):
+The CLI bridges from Solana via [Squid Router](https://squidrouter.com/) (Chainflip), or accepts deposits directly on Base. Auto-splits into ETH (gas) + USDC (x402 RPC):
 
 ```bash
 npx apow-cli fund                                          # Interactive: choose chain + token
 npx apow-cli fund --chain solana --token sol               # Bridge SOL → ETH+USDC on Base
-npx apow-cli fund --chain solana --token sol --key <b58>   # Direct Solana signing (~20s)
 npx apow-cli fund --chain solana --token usdc              # Bridge Solana USDC → Base
-npx apow-cli fund --chain ethereum --token eth             # Bridge ETH from mainnet
-npx apow-cli fund --chain ethereum --token usdc            # Bridge USDC from mainnet
 npx apow-cli fund --chain base                             # Show address, wait for deposit
 npx apow-cli fund --chain base --no-swap                   # Skip auto-split
 ```
 
-**Bridge methods per chain:**
-
-| Chain | Direct signing | Deposit address |
-|-------|---------------|-----------------|
-| Solana | deBridge DLN (~20s, `--key`) | Squid Router (~1-3 min) |
-| Ethereum | deBridge DLN (~20s, uses PRIVATE_KEY on mainnet) | Squid Router (~1-3 min) |
-| Base | N/A (already on Base) | Show address + QR code |
+**Solana bridging:** Generates a one-time deposit address with QR code. Send tokens from any Solana wallet (Phantom, Backpack, etc.). Requires `SQUID_INTEGRATOR_ID` in `.env` (free at [squidrouter.com](https://app.squidrouter.com/)). Bridge time: ~1-3 minutes via Chainflip.
 
 **Auto-split:** After bridging, the CLI checks ETH and USDC balances. If either is below the minimum (0.003 ETH for gas, 2.00 USDC for x402 RPC), it swaps the needed amount via Uniswap V3 on Base. Use `--no-swap` to skip.
-
-**Direct signing (Solana `--key`):** Provide your base58 Solana secret key. The CLI calls deBridge DLN to create a bridge order, signs the Solana transaction locally, submits it, and polls until funds arrive on Base. No API key needed.
-
-**Deposit address (no `--key`):** Requires `SQUID_INTEGRATOR_ID` in `.env` (free, apply at [squidrouter.com](https://app.squidrouter.com/)). Generates a one-time deposit address with a QR code. Send tokens from any wallet and the bridge handles the rest.
 
 ### Manual Funding Options
 
@@ -280,7 +266,6 @@ CHAIN=base
 | `RPC_URL` | No | Alchemy x402 | Base JSON-RPC endpoint. Default uses Alchemy x402 (premium, paid via USDC). Set to override with a custom endpoint. |
 | `CHAIN` | No | `base` | Network selector; auto-detects `baseSepolia` if RPC URL contains "sepolia" |
 | `SOLANA_RPC_URL` | No | `https://api.mainnet-beta.solana.com` | Solana RPC endpoint (only for `apow fund --chain solana`) |
-| `ETHEREUM_RPC_URL` | No | `https://ethereum-rpc.publicnode.com` | Ethereum mainnet RPC (only for `apow fund --chain ethereum`) |
 | `SQUID_INTEGRATOR_ID` | No | - | Squid Router integrator ID for deposit address flow (free at [squidrouter.com](https://app.squidrouter.com/)) |
 
 ### LLM Provider Recommendations (for Minting)
@@ -638,12 +623,11 @@ The CLI makes only these network calls:
 2. **LLM API** (to user-configured provider): sends only word-puzzle prompts for SMHL solving, never wallet data
 3. **Bridge APIs** (only when using `apow fund`):
    - **CoinGecko** (`api.coingecko.com`): SOL/ETH price quotes
-   - **deBridge DLN** (`dln.debridge.finance`): bridge order creation and status (direct signing flow)
-   - **Squid Router** (`v2.api.squidrouter.com`): deposit address generation (deposit address flow)
+   - **Squid Router** (`v2.api.squidrouter.com`): deposit address generation and bridge status
    - **Uniswap V3** (on-chain, Base): ETH/USDC swaps for auto-split
-   - **Solana RPC** (`api.mainnet-beta.solana.com` or custom): balance checks and tx submission
+   - **Solana RPC** (`api.mainnet-beta.solana.com` or custom): balance checks
 
-No private keys are transmitted to bridge providers. deBridge returns a serialized Solana transaction that is signed locally. Squid generates a deposit address, and the user sends SOL themselves.
+No private keys are transmitted to bridge providers. Squid generates a deposit address, and the user sends tokens from their own wallet.
 
 ### LLM Calls Are Data-Isolated
 

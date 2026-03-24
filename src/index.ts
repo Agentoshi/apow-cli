@@ -252,16 +252,15 @@ async function main(): Promise<void> {
 
   program
     .command("fund")
-    .description("Fund your wallet — bridge from Solana/Ethereum or swap on Base")
-    .option("--chain <chain>", "Source chain: solana, ethereum, base")
-    .option("--token <token>", "Source token: sol, eth, usdc")
-    .option("--key <base58>", "Solana private key for direct signing")
+    .description("Fund your wallet — bridge from Solana or send on Base")
+    .option("--chain <chain>", "Source chain: solana, base")
+    .option("--token <token>", "Source token: sol, usdc, eth")
     .option("--amount <eth>", "Target ETH amount (default: 0.005)")
     .option("--no-swap", "Skip auto-split after bridging")
     .hook("preAction", async () => {
       await runPreflight("readonly");
     })
-    .action(async (opts: { chain?: string; token?: string; key?: string; amount?: string; swap?: boolean }) => {
+    .action(async (opts: { chain?: string; token?: string; amount?: string; swap?: boolean }) => {
       await runFundFlow(opts);
     });
 

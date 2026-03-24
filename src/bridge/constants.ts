@@ -1,9 +1,8 @@
 // Shared chain IDs, token addresses, and types for cross-chain bridging.
 
 export const CHAIN_IDS = {
-  solana:   { debridge: "7565164", squid: "solana" },
-  ethereum: { debridge: "1",       squid: "1" },
-  base:     { debridge: "8453",    squid: "8453" },
+  solana: "solana",
+  base:   "8453",
 } as const;
 
 export const TOKENS = {
@@ -11,11 +10,6 @@ export const TOKENS = {
     native: "11111111111111111111111111111111",
     nativeWrapped: "So11111111111111111111111111111111111111112",
     usdc: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-  },
-  ethereum: {
-    native: "0x0000000000000000000000000000000000000000",
-    nativeSquid: "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE",
-    usdc: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
   },
   base: {
     native: "0x0000000000000000000000000000000000000000",
@@ -25,7 +19,7 @@ export const TOKENS = {
   },
 } as const;
 
-export type SourceChain = "solana" | "ethereum" | "base";
+export type SourceChain = "solana" | "base";
 export type SourceToken = "native" | "usdc";
 export type BaseAsset = "eth" | "usdc";
 

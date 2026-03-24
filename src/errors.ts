@@ -118,19 +118,11 @@ const patterns: Array<{
     }),
   },
   {
-    test: (m) => m.includes("deBridge") && (m.includes("route") || m.includes("unavailable")),
+    test: (m) => m.includes("Squid") && (m.includes("route") || m.includes("deposit")),
     classify: () => ({
       category: "transient",
       userMessage: "Bridge route temporarily unavailable",
-      recovery: "Try a different bridge method or wait a few minutes",
-    }),
-  },
-  {
-    test: (m) => m.includes("ethereum-rpc.publicnode") || (m.includes("ETHEREUM_RPC") && m.includes("unreachable")),
-    classify: () => ({
-      category: "setup",
-      userMessage: "Ethereum mainnet RPC unreachable",
-      recovery: "Set ETHEREUM_RPC_URL in .env (default: https://ethereum-rpc.publicnode.com)",
+      recovery: "Wait a few minutes and try again",
     }),
   },
 ];
