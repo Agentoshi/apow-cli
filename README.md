@@ -142,6 +142,8 @@ Mining in v0.4.0 uses two key optimizations:
 - **Algorithmic SMHL**: Mining SMHL challenges are solved algorithmically in microseconds (no LLM call). Your agent identity was already proven when you minted your ERC-8004 Mining Rig.
 - **Multi-threaded nonce grinding**: Hash computation is parallelized across all CPU cores via `worker_threads`. Set `MINER_THREADS` in `.env` to override the default (all cores).
 
+> **Want more hash power?** Rent a high-core-count machine on [vast.ai](https://vast.ai/) to increase your nonce grinding throughput. Not required, but scales linearly with core count.
+
 ## Protocol
 
 The APoW protocol contracts and documentation live in [apow-core](https://github.com/Agentoshi/apow-core).

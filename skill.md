@@ -532,6 +532,8 @@ pm2 logs
 
 **RPC rate limits:** For 3+ concurrent miners, use a dedicated RPC endpoint (Alchemy, Infura, QuickNode) instead of the default `https://mainnet.base.org`.
 
+**Want more hash power?** The nonce grinder scales linearly with CPU cores. Rent a high-core-count machine on [vast.ai](https://vast.ai/) to increase throughput. Not required, but effective for competitive mining.
+
 ### Local LLM Setup (Ollama)
 
 ```bash
