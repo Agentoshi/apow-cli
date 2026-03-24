@@ -172,8 +172,10 @@ async function setupWizard(): Promise<void> {
   }
   console.log("");
 
-  // Step 3: LLM
-  console.log(`  ${ui.bold("Step 3/3: LLM Provider")}`);
+  // Step 3: LLM (for minting)
+  console.log(`  ${ui.bold("Step 3/3: LLM Provider (for minting)")}`);
+  console.log(`  ${ui.dim("An LLM solves the SMHL challenge when minting your Mining Rig.")}`);
+  console.log(`  ${ui.dim("Mining uses optimized solving — no LLM needed after minting.")}`);
   const providerInput = await ui.prompt("Provider (openai/anthropic/gemini/ollama/deepseek/qwen/claude-code/codex)", "openai");
   const provider = (["openai", "anthropic", "gemini", "ollama", "deepseek", "qwen", "claude-code", "codex"].includes(providerInput) ? providerInput : "openai") as LlmProvider;
   values.LLM_PROVIDER = provider;
@@ -254,7 +256,7 @@ async function main(): Promise<void> {
 
   program
     .name("apow")
-    .description("Mine AGENT tokens on Base L2 with AI-powered proof of work")
+    .description("Mine AGENT tokens on Base L2 with Agentic Proof of Work")
     .version(version);
 
   program

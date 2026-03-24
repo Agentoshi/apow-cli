@@ -1,6 +1,6 @@
 # APoW CLI
 
-Mining client for the [APoW (Agentic Proof of Work)](https://github.com/Agentoshi/apow-core) protocol on Base. Solve SMHL challenges with any LLM to mine $AGENT tokens.
+Mining client for the [APoW (Agentic Proof of Work)](https://github.com/Agentoshi/apow-core) protocol on Base. Prove your agent identity once by minting an ERC-8004 Mining Rig, then compete on hash power to mine $AGENT tokens.
 
 **Your agent does all the work — you just fund a wallet.**
 
@@ -36,22 +36,23 @@ npx apow-cli wallet new
 # → Captures address + private key from stdout
 
 # 2. Write .env (no interactive prompts)
+#    LLM config is only needed for minting — mining uses optimized SMHL solving
 cat > .env << 'EOF'
 PRIVATE_KEY=0x<from step 1>
 RPC_URL=https://mainnet.base.org  # UNRELIABLE — get a free Alchemy URL (see above)
-LLM_PROVIDER=openai
-LLM_MODEL=gpt-4o-mini
-LLM_API_KEY=<your key>
+LLM_PROVIDER=openai               # Required for minting only
+LLM_MODEL=gpt-4o-mini             # Required for minting only
+LLM_API_KEY=<your key>            # Required for minting only
 EOF
 
 # 3. Fund the wallet (bridge from Solana or send ETH on Base)
 npx apow-cli fund --solana            # bridge SOL → ETH on Base
 # Or ask your user to send ≥0.005 ETH on Base directly
 
-# 4. Mint a mining rig NFT (solves SMHL challenge via LLM)
+# 4. Mint a mining rig NFT (proves agent identity via LLM — one-time)
 npx apow-cli mint
 
-# 5. Start mining (runs forever, auto-detects best rig)
+# 5. Start mining (runs forever, no LLM needed, multi-threaded)
 npx apow-cli mine
 ```
 
@@ -108,9 +109,9 @@ Create a `.env` file or use `apow setup`:
 ```bash
 PRIVATE_KEY=0x...              # Your wallet private key
 RPC_URL=https://mainnet.base.org  # UNRELIABLE — strongly recommend a free Alchemy URL instead (see above)
-LLM_PROVIDER=openai            # openai | anthropic | gemini | ollama | claude-code | codex
-LLM_MODEL=gpt-4o-mini
-LLM_API_KEY=sk-...
+LLM_PROVIDER=openai            # openai | anthropic | gemini | ollama | claude-code | codex (for minting)
+LLM_MODEL=gpt-4o-mini         # Required for minting only — mining uses optimized SMHL solving
+LLM_API_KEY=sk-...             # Required for minting only
 # Solana bridging (only for `apow fund --solana`)
 # SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
 # SQUID_INTEGRATOR_ID=          # free, get at squidrouter.com (deposit address flow only)
@@ -121,7 +122,9 @@ LLM_API_KEY=sk-...
 
 See [.env.example](.env.example) for all options.
 
-## LLM Providers
+## LLM Providers (for Minting)
+
+An LLM is required to mint your Mining Rig NFT (one-time identity verification). Once minted, mining uses optimized algorithmic SMHL solving — no LLM needed.
 
 | Provider | Model | Cost/call | Notes |
 |----------|-------|-----------|-------|
@@ -131,6 +134,13 @@ See [.env.example](.env.example) for all options.
 | Ollama | `llama3.1` | Free | Local GPU required |
 | Claude Code | `default` | Subscription | No API key needed |
 | Codex | `default` | Subscription | No API key needed |
+
+## Speed Mining (v0.4.0+)
+
+Mining in v0.4.0 uses two key optimizations:
+
+- **Algorithmic SMHL**: Mining SMHL challenges are solved algorithmically in microseconds (no LLM call). Your agent identity was already proven when you minted your ERC-8004 Mining Rig.
+- **Multi-threaded nonce grinding**: Hash computation is parallelized across all CPU cores via `worker_threads`. Set `MINER_THREADS` in `.env` to override the default (all cores).
 
 ## Protocol
 

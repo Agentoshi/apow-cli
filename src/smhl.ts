@@ -390,6 +390,38 @@ async function requestProviderSolution(prompt: string): Promise<string> {
   }
 }
 
+/**
+ * Solve SMHL challenge algorithmically (no LLM needed).
+ * On-chain _verifySMHL only checks: totalLength ±5, charValue anywhere, wordCount ±2.
+ * Generates a valid solution in microseconds.
+ */
+export function solveSmhlAlgorithmic(challenge: SmhlChallenge): string {
+  const requiredChar = String.fromCharCode(challenge.charValue);
+  const targetWords = challenge.wordCount;
+  const targetLen = challenge.totalLength;
+  const spaces = targetWords - 1;
+  const letterBudget = targetLen - spaces;
+
+  if (letterBudget <= 0 || targetWords <= 0) {
+    return requiredChar.repeat(targetLen);
+  }
+
+  const baseWordLen = Math.floor(letterBudget / targetWords);
+  const extraChars = letterBudget - baseWordLen * targetWords;
+
+  const words: string[] = [];
+  for (let i = 0; i < targetWords; i++) {
+    const len = Math.max(1, baseWordLen + (i < extraChars ? 1 : 0));
+    if (i === 0) {
+      words.push(requiredChar + "a".repeat(len - 1));
+    } else {
+      words.push("a".repeat(len));
+    }
+  }
+
+  return words.join(" ");
+}
+
 export async function solveSmhlChallenge(
   challenge: SmhlChallenge,
   onAttempt?: (attempt: number) => void,

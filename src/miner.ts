@@ -7,7 +7,8 @@ import { config } from "./config";
 import { detectMiners, formatHashpower, rarityLabels, selectBestMiner } from "./detect";
 import { classifyError } from "./errors";
 import { txUrl } from "./explorer";
-import { normalizeSmhlChallenge, solveSmhlChallenge } from "./smhl";
+import { grindNonceParallel } from "./grinder";
+import { normalizeSmhlChallenge, solveSmhlAlgorithmic, validateSmhlSolution } from "./smhl";
 import * as ui from "./ui";
 import { account as walletAccount, getEthBalance, publicClient, requireWallet } from "./wallet";
 
@@ -236,20 +237,28 @@ export async function startMining(tokenId: bigint): Promise<void> {
       const [challengeNumber, target, rawSmhl] = miningChallenge;
       const smhl = normalizeSmhlChallenge(rawSmhl);
 
-      // Solve SMHL with spinner
-      const smhlSpinner = ui.spinner("Solving SMHL challenge...");
+      // Solve SMHL algorithmically (sub-millisecond)
       const smhlStart = process.hrtime();
-      const smhlSolution = await solveSmhlChallenge(smhl, (attempt) => {
-        smhlSpinner.update(`Solving SMHL challenge... attempt ${attempt}/5`);
-      });
+      const smhlSolution = solveSmhlAlgorithmic(smhl);
+      const smhlIssues = validateSmhlSolution(smhlSolution, smhl);
+      if (smhlIssues.length > 0) {
+        throw new Error(`SMHL generation failed: ${smhlIssues.join(", ")}`);
+      }
       const smhlElapsed = elapsedSeconds(smhlStart);
-      smhlSpinner.stop(`Solving SMHL challenge... done (${smhlElapsed.toFixed(1)}s)`);
+      console.log(`  ${ui.dim(`SMHL solved (${(smhlElapsed * 1000).toFixed(1)}ms)`)}`);
 
-      // Grind nonce with spinner
+
+      // Grind nonce with multi-threaded spinner
       const nonceSpinner = ui.spinner("Grinding nonce...");
-      const grind = await grindNonce(challengeNumber, target, account.address, (attempts, hashrate) => {
-        const khs = (hashrate / 1000).toFixed(0);
-        nonceSpinner.update(`Grinding nonce... ${khs}k H/s (${attempts.toLocaleString()} attempts)`);
+      const grind = await grindNonceParallel({
+        challengeNumber,
+        target,
+        minerAddress: account.address,
+        threads: config.minerThreads,
+        onProgress: (attempts, hashrate) => {
+          const khs = (hashrate / 1000).toFixed(0);
+          nonceSpinner.update(`Grinding nonce... ${khs}k H/s (${attempts.toLocaleString()} attempts)`);
+        },
       });
       const khs = (grind.hashrate / 1000).toFixed(0);
       nonceSpinner.stop(`Grinding nonce... done (${grind.elapsed.toFixed(1)}s, ${khs}k H/s)`);

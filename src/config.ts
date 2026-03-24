@@ -1,5 +1,6 @@
 import { config as loadEnv } from "dotenv";
 import { writeFile } from "node:fs/promises";
+import os from "node:os";
 import { join } from "node:path";
 import type { Address, Chain, Hex } from "viem";
 import { base, baseSepolia } from "viem/chains";
@@ -20,6 +21,7 @@ export interface AppConfig {
   chainName: ChainName;
   miningAgentAddress: Address;
   agentCoinAddress: Address;
+  minerThreads: number;
 }
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as Address;
@@ -107,6 +109,7 @@ export const config: AppConfig = {
   chainName,
   miningAgentAddress: parseAddress("MINING_AGENT_ADDRESS", DEFAULT_MINING_AGENT_ADDRESS),
   agentCoinAddress: parseAddress("AGENT_COIN_ADDRESS", DEFAULT_AGENT_COIN_ADDRESS),
+  minerThreads: parseInt(process.env.MINER_THREADS ?? String(os.cpus().length), 10),
 };
 
 export function requirePrivateKey(): Hex {
