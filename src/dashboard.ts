@@ -1,9 +1,10 @@
 import * as http from "node:http";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { createPublicClient, formatEther, http as viemHttp, type Abi, type Address } from "viem";
+import { createPublicClient, formatEther, http as viemHttp, type Abi, type Address, type Transport } from "viem";
 import { base } from "viem/chains";
 import { getDashboardHtml } from "./dashboard-html";
+import { createX402Transport } from "./x402";
 
 import AgentCoinAbiJson from "./abi/AgentCoin.json";
 import MiningAgentAbiJson from "./abi/MiningAgent.json";
@@ -52,6 +53,8 @@ export interface DashboardOpts {
   port: number;
   walletsPath: string;
   rpcUrl: string;
+  useX402: boolean;
+  privateKey?: `0x${string}`;
   miningAgentAddress: Address;
   agentCoinAddress: Address;
 }
@@ -197,11 +200,15 @@ function parseArtFromTokenUri(raw: string): string {
 // --- Server ---
 
 export function startDashboardServer(opts: DashboardOpts): http.Server {
-  const { port, walletsPath, rpcUrl, miningAgentAddress, agentCoinAddress } = opts;
+  const { port, walletsPath, rpcUrl, useX402, privateKey, miningAgentAddress, agentCoinAddress } = opts;
+
+  const transport: Transport = useX402 && privateKey
+    ? createX402Transport(privateKey)
+    : viemHttp(rpcUrl);
 
   const publicClient = createPublicClient({
     chain: base,
-    transport: viemHttp(rpcUrl),
+    transport,
   });
 
   const artCache = new Map<string, string>();

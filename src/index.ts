@@ -150,26 +150,10 @@ async function setupWizard(): Promise<void> {
 
   // Step 2: RPC
   console.log(`  ${ui.bold("Step 2/3: RPC")}`);
-  const rpcUrl = await ui.prompt("Base RPC URL", "https://mainnet.base.org");
-  values.RPC_URL = rpcUrl;
-
-  // Validate RPC connectivity
-  try {
-    const { createPublicClient, http } = await import("viem");
-    const { base, baseSepolia } = await import("viem/chains");
-    const isSepolia = rpcUrl.toLowerCase().includes("sepolia");
-    const testClient = createPublicClient({
-      chain: isSepolia ? baseSepolia : base,
-      transport: http(rpcUrl),
-    });
-    const blockNumber = await testClient.getBlockNumber();
-    const networkName = isSepolia ? "Base Sepolia" : "Base mainnet";
-    ui.ok(`Connected — ${networkName}, block #${blockNumber.toLocaleString()}`);
-    if (isSepolia) values.CHAIN = "baseSepolia";
-  } catch {
-    ui.fail("Could not connect to RPC");
-    ui.hint("Continuing anyway — you can fix RPC_URL in .env later");
-  }
+  console.log(`  ${ui.dim("Default: Alchemy x402 — premium RPC paid automatically")}`);
+  console.log(`  ${ui.dim("via USDC in your mining wallet. No API key needed.")}`);
+  console.log(`  ${ui.dim("To use a custom RPC, set RPC_URL in .env after setup.")}`);
+  ui.ok("RPC: Alchemy x402 (default)");
   console.log("");
 
   // Step 3: LLM (for minting)
@@ -268,14 +252,16 @@ async function main(): Promise<void> {
 
   program
     .command("fund")
-    .description("Fund your wallet — bridge SOL → ETH on Base, or show deposit address")
-    .option("--solana", "Bridge from Solana")
+    .description("Fund your wallet — bridge from Solana/Ethereum or swap on Base")
+    .option("--chain <chain>", "Source chain: solana, ethereum, base")
+    .option("--token <token>", "Source token: sol, eth, usdc")
     .option("--key <base58>", "Solana private key for direct signing")
     .option("--amount <eth>", "Target ETH amount (default: 0.005)")
+    .option("--no-swap", "Skip auto-split after bridging")
     .hook("preAction", async () => {
       await runPreflight("readonly");
     })
-    .action(async (opts: { solana?: boolean; key?: string; amount?: string }) => {
+    .action(async (opts: { chain?: string; token?: string; key?: string; amount?: string; swap?: boolean }) => {
       await runFundFlow(opts);
     });
 
@@ -523,6 +509,8 @@ async function main(): Promise<void> {
         port: 3847,
         walletsPath,
         rpcUrl: config.rpcUrl,
+        useX402: config.useX402,
+        privateKey: config.privateKey as `0x${string}` | undefined,
         miningAgentAddress: config.miningAgentAddress as `0x${string}`,
         agentCoinAddress: config.agentCoinAddress as `0x${string}`,
       });

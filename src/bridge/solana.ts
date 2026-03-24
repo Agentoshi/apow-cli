@@ -87,6 +87,23 @@ export async function getAddressBalance(address: string): Promise<number> {
   return lamports / 1e9;
 }
 
+/** Get SPL token balance (e.g., USDC) for a Solana public key. Returns UI amount (not raw). */
+export async function getSplTokenBalance(
+  publicKeyBase58: string,
+  mintAddress: string,
+): Promise<number> {
+  const { Connection, PublicKey } = await import("@solana/web3.js");
+  const connection = new Connection(getSolanaRpcUrl(), "confirmed");
+  const owner = new PublicKey(publicKeyBase58);
+  const mint = new PublicKey(mintAddress);
+
+  const accounts = await connection.getParsedTokenAccountsByOwner(owner, { mint });
+  if (accounts.value.length === 0) return 0;
+
+  const parsed = accounts.value[0].account.data.parsed;
+  return parsed?.info?.tokenAmount?.uiAmount ?? 0;
+}
+
 /** Deserialize, sign, and submit a base64-encoded Solana transaction. */
 export async function signAndSendTransaction(
   serializedTxBase64: string,

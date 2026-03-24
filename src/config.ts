@@ -13,6 +13,7 @@ export type ChainName = "base" | "baseSepolia";
 export interface AppConfig {
   privateKey?: Hex;
   rpcUrl: string;
+  useX402: boolean;
   llmProvider: LlmProvider;
   llmApiKey?: string;
   llmModel: string;
@@ -101,6 +102,7 @@ const chainName = resolveChainName();
 export const config: AppConfig = {
   privateKey: parsePrivateKey(process.env.PRIVATE_KEY),
   rpcUrl: process.env.RPC_URL ?? DEFAULT_RPC_URL,
+  useX402: !process.env.RPC_URL,
   llmProvider: normalizeProvider(process.env.LLM_PROVIDER),
   llmApiKey: resolveLlmApiKey(normalizeProvider(process.env.LLM_PROVIDER)),
   llmModel: process.env.LLM_MODEL ?? DEFAULT_LLM_MODEL,

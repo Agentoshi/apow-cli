@@ -1,13 +1,54 @@
-// Squid Router bridge — deposit address flow (Options B+C).
-// SOL → ETH on Base via Chainflip multi-hop (~1-3 minutes).
+// Squid Router bridge — deposit address flow.
+// Supports SOL→Base and Ethereum→Base via Chainflip multi-hop (~1-3 minutes).
 // Requires SQUID_INTEGRATOR_ID (free, apply at squidrouter.com).
+
+import { CHAIN_IDS, TOKENS } from "./constants";
 
 const SQUID_API = "https://v2.api.squidrouter.com/v2";
 
-const SOLANA_CHAIN_ID = "solana";
-const BASE_CHAIN_ID = "8453";
-const NATIVE_SOL_ADDRESS = "So11111111111111111111111111111111111111112"; // Wrapped SOL mint
-const NATIVE_ETH_ADDRESS = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
+export interface SquidRoute {
+  fromChain: string;
+  fromToken: string;
+  toChain: string;
+  toToken: string;
+  srcDecimals: number;
+  dstDecimals: number;
+}
+
+export const SQUID_ROUTES = {
+  sol_to_eth: {
+    fromChain: CHAIN_IDS.solana.squid,
+    fromToken: TOKENS.solana.nativeWrapped,
+    toChain: CHAIN_IDS.base.squid,
+    toToken: TOKENS.base.nativeSquid,
+    srcDecimals: 9,
+    dstDecimals: 18,
+  },
+  sol_usdc_to_base_usdc: {
+    fromChain: CHAIN_IDS.solana.squid,
+    fromToken: TOKENS.solana.usdc,
+    toChain: CHAIN_IDS.base.squid,
+    toToken: TOKENS.base.usdc,
+    srcDecimals: 6,
+    dstDecimals: 6,
+  },
+  eth_to_base_eth: {
+    fromChain: CHAIN_IDS.ethereum.squid,
+    fromToken: TOKENS.ethereum.nativeSquid,
+    toChain: CHAIN_IDS.base.squid,
+    toToken: TOKENS.base.nativeSquid,
+    srcDecimals: 18,
+    dstDecimals: 18,
+  },
+  eth_usdc_to_base_usdc: {
+    fromChain: CHAIN_IDS.ethereum.squid,
+    fromToken: TOKENS.ethereum.usdc,
+    toChain: CHAIN_IDS.base.squid,
+    toToken: TOKENS.base.usdc,
+    srcDecimals: 6,
+    dstDecimals: 6,
+  },
+} as const;
 
 export interface DepositInfo {
   depositAddress: string;
@@ -22,22 +63,23 @@ function getIntegratorId(): string {
     throw new Error(
       "SQUID_INTEGRATOR_ID is required for the deposit address flow.\n" +
         "Get one free at https://app.squidrouter.com/\n" +
-        "Or use direct signing instead: apow fund --solana --key <base58>",
+        "Or use direct signing instead: apow fund --chain solana --key <base58>",
     );
   }
   return id;
 }
 
 /**
- * Get a Squid deposit address for SOL → ETH on Base bridging.
- * User sends SOL to this address from any wallet; Squid handles the rest.
+ * Get a Squid deposit address for bridging to Base.
+ * User sends tokens to this address from any wallet; Squid handles the rest.
  */
 export async function getDepositAddress(
   baseAddress: string,
-  solAmount: number,
+  amount: number,
+  route: SquidRoute = SQUID_ROUTES.sol_to_eth,
 ): Promise<DepositInfo> {
   const integratorId = getIntegratorId();
-  const lamports = Math.floor(solAmount * 1e9).toString();
+  const rawAmount = Math.floor(amount * 10 ** route.srcDecimals).toString();
 
   // Step 1: Get route quote
   const routeResponse = await fetch(`${SQUID_API}/route`, {
@@ -47,11 +89,11 @@ export async function getDepositAddress(
       "x-integrator-id": integratorId,
     },
     body: JSON.stringify({
-      fromChain: SOLANA_CHAIN_ID,
-      toChain: BASE_CHAIN_ID,
-      fromToken: NATIVE_SOL_ADDRESS,
-      toToken: NATIVE_ETH_ADDRESS,
-      fromAmount: lamports,
+      fromChain: route.fromChain,
+      toChain: route.toChain,
+      fromToken: route.fromToken,
+      toToken: route.toToken,
+      fromAmount: rawAmount,
       toAddress: baseAddress,
       quoteOnly: false,
       enableBoost: true,
@@ -92,8 +134,9 @@ export async function getDepositAddress(
 
   const depositData = (await depositResponse.json()) as any;
 
-  const estimatedReceive = routeData.route?.estimate?.toAmount
-    ? (Number(routeData.route.estimate.toAmount) / 1e18).toFixed(6)
+  const toAmount = routeData.route?.estimate?.toAmount;
+  const estimatedReceive = toAmount
+    ? (Number(toAmount) / 10 ** route.dstDecimals).toFixed(route.dstDecimals === 6 ? 2 : 6)
     : "unknown";
 
   return {
@@ -110,9 +153,10 @@ export async function getDepositAddress(
  */
 export async function pollBridgeStatus(
   requestId: string,
+  dstDecimals = 18,
   onUpdate?: (status: string) => void,
   timeoutMs = 600_000,
-): Promise<{ status: string; ethReceived?: string }> {
+): Promise<{ status: string; received?: string }> {
   const integratorId = getIntegratorId();
   const deadline = Date.now() + timeoutMs;
 
@@ -141,8 +185,10 @@ export async function pollBridgeStatus(
         ) {
           return {
             status: "fulfilled",
-            ethReceived: data.toChain?.amount
-              ? (Number(data.toChain.amount) / 1e18).toFixed(6)
+            received: data.toChain?.amount
+              ? (Number(data.toChain.amount) / 10 ** dstDecimals).toFixed(
+                  dstDecimals === 6 ? 2 : 6,
+                )
               : undefined,
           };
         }

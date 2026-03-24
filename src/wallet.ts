@@ -1,28 +1,52 @@
-import { createPublicClient, createWalletClient, http } from "viem";
+import { createPublicClient, createWalletClient, http, type Transport } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { Attribution } from "ox/erc8021";
 
 import { config } from "./config";
+import { createX402Transport } from "./x402";
 
 const DATA_SUFFIX = Attribution.toDataSuffix({ codes: ["bc_6wfeb1kd"] });
 
-export const publicClient = createPublicClient({
+function getTransport(): Transport {
+  if (config.useX402 && config.privateKey) {
+    return createX402Transport(config.privateKey);
+  }
+  return http(config.rpcUrl);
+}
+
+const transport = getTransport();
+
+export let publicClient = createPublicClient({
   chain: config.chain,
-  transport: http(config.rpcUrl),
+  transport,
 });
 
 export const account = config.privateKey
   ? privateKeyToAccount(config.privateKey)
   : null;
 
-export const walletClient = account
+export let walletClient = account
   ? createWalletClient({
       account,
       chain: config.chain,
-      transport: http(config.rpcUrl),
+      transport,
       dataSuffix: DATA_SUFFIX,
     })
   : null;
+
+/** Reinitialize clients after config changes (e.g., x402 fallback). */
+export function reinitClients(): void {
+  const t = getTransport();
+  publicClient = createPublicClient({ chain: config.chain, transport: t });
+  if (account) {
+    walletClient = createWalletClient({
+      account,
+      chain: config.chain,
+      transport: t,
+      dataSuffix: DATA_SUFFIX,
+    });
+  }
+}
 
 export function requireWallet() {
   if (!account || !walletClient) {

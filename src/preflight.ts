@@ -1,12 +1,27 @@
-import type { Abi } from "viem";
-import { formatEther } from "viem";
+import type { Abi, Address } from "viem";
+import { createPublicClient, formatEther, formatUnits, http } from "viem";
+import { base } from "viem/chains";
 
 import agentCoinAbiJson from "./abi/AgentCoin.json";
 import { config } from "./config";
-import { publicClient, account } from "./wallet";
+import { publicClient, account, reinitClients } from "./wallet";
+import { resetX402 } from "./x402";
 import * as ui from "./ui";
 
 const agentCoinAbi = agentCoinAbiJson as Abi;
+
+const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address;
+const USDC_DECIMALS = 6;
+
+const erc20BalanceAbi = [
+  {
+    type: "function" as const,
+    name: "balanceOf",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view" as const,
+  },
+] as const;
 
 export type PreflightLevel = "readonly" | "wallet" | "mining";
 
@@ -50,6 +65,45 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
       passed: false,
       fix: "Check internet connection or update RPC_URL in .env",
     });
+  }
+
+  // Check x402: USDC balance when x402 mode is active
+  if (config.useX402 && account) {
+    try {
+      // Use a separate lightweight client to avoid chicken-and-egg
+      // (can't use x402 to check if we can pay for x402)
+      const checkClient = createPublicClient({
+        chain: base,
+        transport: http("https://mainnet.base.org"),
+      });
+      const usdcBalance = (await checkClient.readContract({
+        address: USDC_ADDRESS,
+        abi: erc20BalanceAbi,
+        functionName: "balanceOf",
+        args: [account.address],
+      })) as bigint;
+
+      if (usdcBalance === 0n) {
+        ui.warn("No USDC balance — x402 RPC requires USDC on Base for payment");
+        ui.hint(`Send USDC to ${account.address} on Base, or set RPC_URL in .env to use a free RPC`);
+        ui.hint("Falling back to public RPC (https://mainnet.base.org)");
+        config.useX402 = false;
+        resetX402();
+        reinitClients();
+      } else {
+        const formatted = formatUnits(usdcBalance, USDC_DECIMALS);
+        results.push({
+          label: `RPC: Alchemy x402 (${formatted} USDC available)`,
+          passed: true,
+        });
+      }
+    } catch {
+      // USDC check failed — fall back silently
+      ui.warn("Could not check USDC balance — falling back to public RPC");
+      config.useX402 = false;
+      resetX402();
+      reinitClients();
+    }
   }
 
   if (level === "wallet" || level === "mining") {

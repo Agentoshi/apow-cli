@@ -78,6 +78,14 @@ const patterns: Array<{
     }),
   },
   {
+    test: (m) => /\b402\b/.test(m) || m.toLowerCase().includes("x402") || (m.toLowerCase().includes("insufficient") && m.toLowerCase().includes("usdc")),
+    classify: () => ({
+      category: "transient",
+      userMessage: "x402 RPC payment failed — check USDC balance on Base",
+      recovery: "Send USDC to your wallet on Base, or set RPC_URL in .env to use a free RPC",
+    }),
+  },
+  {
     test: (m) => m.toLowerCase().includes("insufficient funds"),
     classify: () => ({
       category: "setup",
@@ -91,6 +99,38 @@ const patterns: Array<{
       category: "llm",
       userMessage: "LLM failed to solve the SMHL challenge after 5 attempts",
       recovery: "Try a different model (gpt-4o-mini recommended) or check your LLM API key",
+    }),
+  },
+  {
+    test: (m) => m.includes("INSUFFICIENT_OUTPUT_AMOUNT") || m.includes("Too little received"),
+    classify: () => ({
+      category: "transient",
+      userMessage: "Uniswap swap failed — slippage exceeded",
+      recovery: "Price moved during swap. Try again — the auto-split will recalculate.",
+    }),
+  },
+  {
+    test: (m) => m.includes("swap reverted"),
+    classify: () => ({
+      category: "transient",
+      userMessage: "Uniswap swap transaction reverted",
+      recovery: "Try again. If persistent, check ETH/USDC balances on Base.",
+    }),
+  },
+  {
+    test: (m) => m.includes("deBridge") && (m.includes("route") || m.includes("unavailable")),
+    classify: () => ({
+      category: "transient",
+      userMessage: "Bridge route temporarily unavailable",
+      recovery: "Try a different bridge method or wait a few minutes",
+    }),
+  },
+  {
+    test: (m) => m.includes("eth.llamarpc") || (m.includes("ETHEREUM_RPC") && m.includes("unreachable")),
+    classify: () => ({
+      category: "setup",
+      userMessage: "Ethereum mainnet RPC unreachable",
+      recovery: "Set ETHEREUM_RPC_URL in .env (default: https://eth.llamarpc.com)",
     }),
   },
 ];
