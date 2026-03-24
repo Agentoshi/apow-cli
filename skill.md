@@ -117,7 +117,7 @@ The miner client validates locally before submitting.
 |---|---|
 | **Node.js** | v18 or higher |
 | **Base wallet** | A private key with ETH on Base (for gas + mint fee) |
-| **LLM access** | API key (OpenAI, Anthropic, Gemini, DeepSeek, Qwen), local Ollama, or Claude Code / Codex CLI (**required for minting only**) |
+| **LLM access** | API key (OpenAI, Gemini, DeepSeek, Qwen, or Anthropic) or local Ollama (**required for minting only**) |
 | **git** | Only if installing from source (not needed for npm) |
 
 ---
@@ -247,7 +247,7 @@ AGENT_COIN_ADDRESS=0x12577CF0D8a07363224D6909c54C056A183e13b3
 
 # === LLM Configuration (required for minting only; mining uses optimized solving) ===
 
-# Provider: "openai" | "anthropic" | "ollama" | "gemini" | "deepseek" | "qwen" | "claude-code" | "codex"
+# Provider: "openai" | "gemini" | "deepseek" | "qwen" | "anthropic" | "ollama"
 LLM_PROVIDER=openai
 
 # API key (not required if LLM_PROVIDER=ollama)
@@ -273,8 +273,8 @@ CHAIN=base
 | `PRIVATE_KEY` | Yes | - | Wallet private key (0x + 64 hex chars) |
 | `MINING_AGENT_ADDRESS` | Yes | - | Deployed MiningAgent contract address |
 | `AGENT_COIN_ADDRESS` | Yes | - | Deployed AgentCoin contract address |
-| `LLM_PROVIDER` | For minting | `openai` | LLM provider for minting: `openai`, `anthropic`, `ollama`, `gemini`, `deepseek`, `qwen`, `claude-code`, or `codex`. Not needed for mining. |
-| `LLM_API_KEY` | For minting | - | API key for minting. Falls back to `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `DEEPSEEK_API_KEY` / `DASHSCOPE_API_KEY` per provider. Not needed for `ollama`, `claude-code`, `codex`, or mining. |
+| `LLM_PROVIDER` | For minting | `openai` | LLM provider for minting: `openai`, `gemini`, `deepseek`, `qwen`, `anthropic`, or `ollama`. Not needed for mining. |
+| `LLM_API_KEY` | For minting | - | API key for minting. Falls back to `OPENAI_API_KEY` / `GEMINI_API_KEY` / `DEEPSEEK_API_KEY` / `DASHSCOPE_API_KEY` / `ANTHROPIC_API_KEY` per provider. Not needed for `ollama` or mining. |
 | `LLM_MODEL` | For minting | `gpt-4o-mini` | Model identifier passed to the provider (minting only) |
 | `MINER_THREADS` | No | All CPU cores | Number of threads for parallel nonce grinding |
 | `RPC_URL` | **Strongly recommended** | `https://mainnet.base.org` | Base JSON-RPC endpoint. **The default public RPC is unreliable. Use Alchemy (free) or another dedicated provider.** |
@@ -286,19 +286,16 @@ CHAIN=base
 
 > An LLM is only needed for **minting** your Mining Rig NFT (one-time identity verification). Mining uses optimized algorithmic SMHL solving, with no LLM needed.
 >
-> **For AI agents:** Use an API-based provider (OpenAI, Anthropic, Gemini, DeepSeek, or Qwen) for minting. Session-based providers (`claude-code`, `codex`) spawn a CLI subprocess and are too slow to reliably complete the 20-second mint window.
+> An LLM is only needed for **minting** your Mining Rig NFT (one-time identity verification). Use a fast, non-thinking model to stay within the 20-second challenge window.
 
 | Provider | Model | Cost per call | Notes |
 |---|---|---|---|
-| OpenAI | `gpt-4o-mini` | ~$0.001 | **Recommended for agents.** Cheapest, fastest, reliable |
+| OpenAI | `gpt-4o-mini` | ~$0.001 | **Recommended.** Cheapest, fastest, reliable |
 | Gemini | `gemini-2.5-flash` | ~$0.001 | Fast, good accuracy |
-| Anthropic | `claude-sonnet-4-5-20250929` | ~$0.005 | High accuracy on constrained generation |
-| OpenAI | `gpt-4o` | ~$0.005 | Higher quality, slightly slower |
 | DeepSeek | `deepseek-chat` | ~$0.001 | Fast, accessible in China |
 | Qwen | `qwen-plus` | ~$0.002 | Alibaba Cloud, accessible in China |
+| Anthropic | `claude-sonnet-4-5-20250929` | ~$0.005 | Works but slower and more expensive |
 | Ollama | `llama3.1` | Free (local) | Requires local GPU; variable accuracy |
-| Claude Code | `default` | Subscription | **Not recommended for minting.** CLI startup too slow for 20s window |
-| Codex | `default` | Subscription | **Not recommended for minting.** CLI startup too slow for 20s window |
 
 ### RPC Recommendations
 
@@ -369,7 +366,7 @@ npx apow-cli mint
 5. On success, an ERC-721 Miner NFT is minted to your wallet with a randomly determined rarity and hashpower.
 6. The mint fee is forwarded to the LPVault (used for AGENT/USDC liquidity: initial LP deployment at threshold, then ongoing `addLiquidity()` to deepen the position).
 
-**Challenge expiry:** 20 seconds from `getChallenge` to `mint`. The LLM must solve quickly. Use an API-based provider (openai/anthropic/gemini/deepseek/qwen). Session-based providers (claude-code/codex) are too slow and will fail.
+**Challenge expiry:** 20 seconds from `getChallenge` to `mint`. The LLM must solve quickly. Use a fast, non-thinking model (gpt-4o-mini, gemini-2.5-flash, deepseek-chat).
 
 ### Mint Price
 
@@ -554,30 +551,6 @@ Ollama runs on `http://127.0.0.1:11434` by default. The miner connects there aut
 
 **Trade-off:** Free inference, but local models may have lower accuracy on the constrained SMHL challenges. The miner retries up to 3 times per challenge, but persistent failures will slow mining.
 
-### Session Mining (Claude Code / Codex)
-
-Mine using your existing Claude Code or Codex subscription (no API key required):
-
-```bash
-# In your .env
-LLM_PROVIDER=claude-code
-# No LLM_API_KEY needed; the miner shells out to your local CLI
-```
-
-Or with Codex:
-```bash
-LLM_PROVIDER=codex
-```
-
-**How it works:** Instead of calling an LLM API, the miner executes `claude -p` or `codex exec` locally to solve SMHL challenges. This uses whatever model your CLI session defaults to.
-
-**Requirements:**
-- `claude` or `codex` CLI must be installed and authenticated
-- The CLI must be available in your PATH
-- Your subscription must be active
-
-**Warning:** Session-based providers (`claude-code`, `codex`) spawn a CLI subprocess for each SMHL challenge. The startup overhead frequently exceeds the 20-second mint challenge window, causing mints to fail with `Expired`. **For minting, always use an API-based provider** (openai, anthropic, gemini, deepseek, or qwen). Session providers may work for the mining loop (which has no time limit per challenge) but are unreliable and not recommended for autonomous operation.
-
 ### Custom RPC Endpoints
 
 Set `RPC_URL` in `.env` to any Base-compatible JSON-RPC endpoint. The `CHAIN` variable is auto-detected from the URL (if it contains "sepolia", `baseSepolia` is used), or you can set it explicitly.
@@ -619,7 +592,7 @@ Use the corresponding testnet contract addresses.
 | `LLM_API_KEY is required for openai.` | Missing API key for cloud provider | Set `LLM_API_KEY` (or provider-specific key like `OPENAI_API_KEY`) in `.env`, or switch to `ollama` |
 | `Insufficient fee` | Not enough ETH sent with mint | Check `getMintPrice()` and ensure wallet has enough ETH |
 | `Sold out` | All 10,000 Miner NFTs minted | No more rigs available; buy one on secondary market |
-| `Expired` | SMHL challenge expired (>20s) | Switch to an API-based provider (openai/gemini/anthropic/deepseek/qwen). Session providers (claude-code/codex) are too slow for the 20s mint window |
+| `Expired` | SMHL challenge expired (>20s) | Use a faster model (gpt-4o-mini, gemini-2.5-flash). Thinking models are too slow for the 20s mint window |
 | `Invalid SMHL` | LLM produced an incorrect solution | Retry; if persistent, switch to a more capable model |
 | `Not your miner` | Token ID not owned by your wallet | Verify `PRIVATE_KEY` matches the NFT owner; check token ID |
 | `Supply exhausted` | All 18.9M mineable AGENT has been minted | Mining is complete; no more rewards available |
@@ -632,8 +605,6 @@ Use the corresponding testnet contract addresses.
 | `SMHL solve failed after 3 attempts` | LLM cannot satisfy constraints | Switch to a more capable model (e.g., `gpt-4o` or `claude-sonnet-4-5-20250929`) |
 | `Fee forward failed` | LPVault rejected the ETH transfer | LPVault may not be set; check contract deployment |
 | `10 consecutive failures` | Repeated transient errors | Check RPC connectivity, wallet balance, and LLM availability |
-| `Claude Code error: ...` | `claude` CLI failed or timed out | Verify `claude` is installed and in PATH; check subscription is active |
-| `Codex error: ...` | `codex` CLI failed or timed out | Verify `codex` is installed and in PATH; check subscription is active |
 | `Timed out waiting for next block (60s)` | RPC not responding or network stalled | Check RPC connectivity; try a different RPC endpoint |
 
 ---

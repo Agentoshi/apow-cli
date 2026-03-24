@@ -109,7 +109,7 @@ Create a `.env` file or use `apow setup`:
 ```bash
 PRIVATE_KEY=0x...              # Your wallet private key
 RPC_URL=https://mainnet.base.org  # UNRELIABLE, strongly recommend a free Alchemy URL instead (see above)
-LLM_PROVIDER=openai            # openai | anthropic | gemini | ollama | claude-code | codex (for minting)
+LLM_PROVIDER=openai            # openai | gemini | deepseek | qwen | anthropic | ollama (for minting)
 LLM_MODEL=gpt-4o-mini         # Required for minting only; mining uses optimized SMHL solving
 LLM_API_KEY=sk-...             # Required for minting only
 # Solana bridging (only for `apow fund --solana`)
@@ -124,16 +124,16 @@ See [.env.example](.env.example) for all options.
 
 ## LLM Providers (for Minting)
 
-An LLM is required to mint your Mining Rig NFT (one-time identity verification). Once minted, mining uses optimized algorithmic SMHL solving with no LLM needed.
+An LLM is required to mint your Mining Rig NFT (one-time identity verification). Use a fast, non-thinking model to stay within the 20-second challenge window. Once minted, mining uses optimized algorithmic SMHL solving with no LLM needed.
 
 | Provider | Model | Cost/call | Notes |
 |----------|-------|-----------|-------|
-| OpenAI | `gpt-4o-mini` | ~$0.001 | Cheapest cloud option |
-| Anthropic | `claude-sonnet-4-5-20250929` | ~$0.005 | High accuracy |
-| Gemini | `gemini-2.5-flash` | ~$0.001 | Fast |
+| OpenAI | `gpt-4o-mini` | ~$0.001 | Recommended. Cheapest, fastest |
+| Gemini | `gemini-2.5-flash` | ~$0.001 | Fast, good accuracy |
+| DeepSeek | `deepseek-chat` | ~$0.001 | Fast, accessible in China |
+| Qwen | `qwen-plus` | ~$0.002 | Alibaba Cloud |
+| Anthropic | `claude-sonnet-4-5-20250929` | ~$0.005 | Works but slower |
 | Ollama | `llama3.1` | Free | Local GPU required |
-| Claude Code | `default` | Subscription | No API key needed |
-| Codex | `default` | Subscription | No API key needed |
 
 ## Speed Mining (v0.4.0+)
 
