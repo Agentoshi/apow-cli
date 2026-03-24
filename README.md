@@ -101,6 +101,9 @@ npx apow-cli mine
 | `apow mint` | Mint a MiningAgent NFT (one per wallet) |
 | `apow mine [tokenId]` | Mine $AGENT with your NFT (auto-detects best rig) |
 | `apow stats [tokenId]` | View mining stats, earnings, difficulty |
+| `apow dashboard start` | Launch multi-wallet mining dashboard |
+| `apow dashboard add <addr>` | Add a wallet to the dashboard |
+| `apow dashboard scan [dir]` | Auto-detect wallet files in a directory |
 
 ## Configuration
 
@@ -143,6 +146,40 @@ Mining in v0.4.0 uses two key optimizations:
 - **Multi-threaded nonce grinding**: Hash computation is parallelized across all CPU cores via `worker_threads`. Set `MINER_THREADS` in `.env` to override the default (all cores).
 
 > **Want more hash power?** Rent a high-core-count machine on [vast.ai](https://vast.ai/) to increase your nonce grinding throughput. Not required, but scales linearly with core count.
+
+## Dashboard
+
+Monitor your entire mining fleet from a single web UI. Zero external dependencies -- vanilla HTML/JS served by the CLI.
+
+```bash
+# Quick start: scan wallet files and launch
+apow dashboard scan .          # detect wallet-0x*.txt files in current directory
+apow dashboard start           # open dashboard at http://localhost:3847
+```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `apow dashboard start` | Launch dashboard web UI (default port 3847) |
+| `apow dashboard add <addr>` | Add a wallet address to monitor |
+| `apow dashboard remove <addr>` | Remove a wallet from monitoring |
+| `apow dashboard scan [dir]` | Auto-detect wallets from `wallet-0x*.txt` files |
+| `apow dashboard wallets` | List all monitored wallets |
+
+### Fleet Configuration
+
+Wallets are stored in `~/.apow/wallets.json` (plain JSON array of addresses). For advanced fleet management, create `~/.apow/fleets.json`:
+
+```json
+[
+  { "name": "Local", "type": "array", "path": "/home/user/.apow/wallets.json" },
+  { "name": "Vast.ai", "type": "rigdirs", "path": "/mnt/mining/rigs" },
+  { "name": "Pool", "type": "walletfiles", "path": "/mnt/mining/wallets" }
+]
+```
+
+Fleet types: `array` (JSON array of addresses), `solkek` (master/miners JSON), `rigdirs` (scan `rig*/wallet-0x*.txt`), `walletfiles` (scan `wallet-0x*.txt`).
 
 ## Protocol
 
