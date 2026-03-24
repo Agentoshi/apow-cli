@@ -104,25 +104,38 @@ export async function getSplTokenBalance(
   return parsed?.info?.tokenAmount?.uiAmount ?? 0;
 }
 
-/** Deserialize, sign, and submit a base64-encoded Solana transaction. */
+/** Deserialize, sign, and submit a serialized Solana transaction (hex or base64). */
 export async function signAndSendTransaction(
-  serializedTxBase64: string,
+  serializedTx: string,
   keypair: any,
 ): Promise<string> {
-  const { Connection, VersionedTransaction } = await import("@solana/web3.js");
+  const { Connection, VersionedTransaction, Transaction } = await import("@solana/web3.js");
   const connection = new Connection(getSolanaRpcUrl(), "confirmed");
 
-  const txBuffer = Buffer.from(serializedTxBase64, "base64");
-  const tx = VersionedTransaction.deserialize(txBuffer);
-  tx.sign([keypair]);
+  // deBridge returns hex (0x...), other bridges may return base64
+  const txBuffer = serializedTx.startsWith("0x")
+    ? Buffer.from(serializedTx.slice(2), "hex")
+    : Buffer.from(serializedTx, "base64");
 
-  const signature = await connection.sendTransaction(tx, {
-    skipPreflight: false,
-    preflightCommitment: "confirmed",
-  });
-
+  // Get fresh blockhash (deBridge-generated txs may have stale ones)
   const { blockhash, lastValidBlockHeight } =
     await connection.getLatestBlockhash("confirmed");
+
+  // Try versioned transaction first, fall back to legacy.
+  // Skip preflight: deBridge Jupiter routes may fail simulation but succeed on-chain.
+  let signature: string;
+  try {
+    const tx = VersionedTransaction.deserialize(txBuffer);
+    tx.message.recentBlockhash = blockhash;
+    tx.sign([keypair]);
+    signature = await connection.sendTransaction(tx, { skipPreflight: true });
+  } catch {
+    const tx = Transaction.from(txBuffer);
+    tx.recentBlockhash = blockhash;
+    tx.sign(keypair);
+    signature = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: true });
+  }
+
   await connection.confirmTransaction(
     { signature, blockhash, lastValidBlockHeight },
     "confirmed",
