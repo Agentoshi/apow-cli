@@ -93,7 +93,7 @@ SMHL ("Show Me Human Language") serves two different roles in APoW:
 
 **SMHL for Minting (identity verification):** When minting a Mining Rig, your LLM solves an SMHL challenge to prove agent capability. This is the "prove yourself" gate: your agent demonstrates it can solve constrained text generation. The LLM receives a prompt like: "Generate a sentence that is approximately N characters long, contains approximately W words, and includes the letter 'X'."
 
-**SMHL for Mining (algorithmic):** During mining, SMHL solutions are generated algorithmically in microseconds, with no LLM needed. Your agent identity was already established when you minted your ERC-721 Mining Rig. Mining is a hash power competition, not a language puzzle.
+**SMHL for Mining (algorithmic):** During mining, SMHL solutions are generated algorithmically in microseconds, with no LLM needed. Your AI was already proven when you minted your Mining Rig. Mining is a hash power competition, not a language puzzle.
 
 On-chain verification checks (both minting and mining):
 1. **Length** (in bytes): within ±5 of the target
@@ -545,7 +545,7 @@ Set `RPC_URL` in `.env` to any Base-compatible JSON-RPC endpoint. The `CHAIN` va
 
 ### Agent Wallet
 
-Each Miner NFT supports an on-chain agent wallet. This creates a one-rig-one-agent identity model: an NFT owner can delegate mining operations to a separate hot wallet without transferring ownership of the rig.
+Each Miner NFT supports an on-chain agent wallet. This creates a one-rig-one-agent model: an NFT owner can delegate mining operations to a separate hot wallet without transferring ownership of the rig.
 
 **Functions:**
 - `getAgentWallet(tokenId)`: returns the registered agent wallet address

@@ -1,6 +1,6 @@
 # APoW CLI
 
-Mining client for the [APoW (Agentic Proof of Work)](https://github.com/Agentoshi/apow-core) protocol on Base. Prove your agent identity once by minting an ERC-721 Mining Rig, then compete on hash power to mine $AGENT tokens.
+Mining client for the [APoW (Agentic Proof of Work)](https://github.com/Agentoshi/apow-core) protocol on Base. Prove you're an AI agent once by minting an ERC-721 Mining Rig, then compete on hash power to mine $AGENT tokens.
 
 **Your agent does all the work. You just fund a wallet.**
 
@@ -47,7 +47,7 @@ EOF
 npx apow-cli fund --chain solana --token sol    # bridge SOL → ETH+USDC on Base
 # Or send ETH/USDC on Base directly
 
-# 4. Mint a mining rig NFT (proves agent identity via LLM, one-time)
+# 4. Mint a mining rig NFT (proves AI via LLM, one-time)
 npx apow-cli mint
 
 # 5. Start mining (runs forever, no LLM needed, multi-threaded)
@@ -161,7 +161,7 @@ apow fund --chain base --no-swap
 
 Mining in v0.4.0 uses two key optimizations:
 
-- **Algorithmic SMHL**: Mining SMHL challenges are solved algorithmically in microseconds (no LLM call). Your agent identity was already proven when you minted your ERC-721 Mining Rig.
+- **Algorithmic SMHL**: Mining SMHL challenges are solved algorithmically in microseconds (no LLM call). Your AI was already proven when you minted your Mining Rig.
 - **Multi-threaded nonce grinding**: Hash computation is parallelized across all CPU cores via `worker_threads`. Set `MINER_THREADS` in `.env` to override the default (all cores).
 
 > **Want more hash power?** Rent a high-core-count machine on [vast.ai](https://vast.ai/) to increase your nonce grinding throughput. Not required, but scales linearly with core count.
