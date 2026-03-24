@@ -126,11 +126,11 @@ const patterns: Array<{
     }),
   },
   {
-    test: (m) => m.includes("eth.llamarpc") || (m.includes("ETHEREUM_RPC") && m.includes("unreachable")),
+    test: (m) => m.includes("ethereum-rpc.publicnode") || (m.includes("ETHEREUM_RPC") && m.includes("unreachable")),
     classify: () => ({
       category: "setup",
       userMessage: "Ethereum mainnet RPC unreachable",
-      recovery: "Set ETHEREUM_RPC_URL in .env (default: https://eth.llamarpc.com)",
+      recovery: "Set ETHEREUM_RPC_URL in .env (default: https://ethereum-rpc.publicnode.com)",
     }),
   },
 ];

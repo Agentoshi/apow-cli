@@ -138,7 +138,7 @@ export async function bridgeFromEvm(
 ): Promise<BridgeResult> {
   const startTime = Date.now();
   const evmAccount = privateKeyToAccount(privateKey);
-  const rpcUrl = process.env.ETHEREUM_RPC_URL ?? "https://eth.llamarpc.com";
+  const rpcUrl = process.env.ETHEREUM_RPC_URL ?? "https://ethereum-rpc.publicnode.com";
 
   const ethWalletClient = createWalletClient({
     account: evmAccount,

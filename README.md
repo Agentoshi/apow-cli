@@ -116,7 +116,7 @@ LLM_MODEL=gpt-4o-mini         # Required for minting only; mining uses optimized
 LLM_API_KEY=sk-...             # Required for minting only
 # Bridging (only for `apow fund`)
 # SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
-# ETHEREUM_RPC_URL=https://eth.llamarpc.com    # free, for `--chain ethereum` only
+# ETHEREUM_RPC_URL=https://ethereum-rpc.publicnode.com    # free, for `--chain ethereum` only
 # SQUID_INTEGRATOR_ID=          # free, get at squidrouter.com (deposit address flow only)
 # Contract addresses (defaults built-in, override only if needed)
 # MINING_AGENT_ADDRESS=0xB7caD3ca5F2BD8aEC2Eb67d6E8D448099B3bC03D
