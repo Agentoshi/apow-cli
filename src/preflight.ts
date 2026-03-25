@@ -75,7 +75,7 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
         results.push({
           label: "No USDC balance — QuickNode x402 requires USDC on Base",
           passed: false,
-          fix: `Send USDC to ${account.address} on Base (~$10 for ~1M RPC calls). Run \`apow fund\` to bridge from Solana.`,
+          fix: `Send USDC to ${account.address} on Base (~$10 covers ${config.llmProvider === "clawrouter" ? "both RPC and LLM calls" : "~1M RPC calls"}). Run \`apow fund\` to bridge from Solana.`,
         });
       } else {
         x402Funded = true;
@@ -159,7 +159,20 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
 
     // Check 5: LLM key set (only required for minting, not mining)
     if (level === "wallet") {
-      if (config.llmProvider === "ollama") {
+      if (config.llmProvider === "clawrouter") {
+        if (!account) {
+          results.push({
+            label: "ClawRouter requires PRIVATE_KEY (wallet signs x402 payments)",
+            passed: false,
+            fix: "Set PRIVATE_KEY in .env",
+          });
+        } else {
+          results.push({
+            label: `LLM provider: clawrouter (x402, same wallet as mining)`,
+            passed: true,
+          });
+        }
+      } else if (config.llmProvider === "ollama") {
         results.push({ label: `LLM provider: ollama (${config.ollamaUrl})`, passed: true });
       } else if (config.llmProvider === "claude-code" || config.llmProvider === "codex") {
         results.push({ label: `LLM provider: ${config.llmProvider} (local CLI)`, passed: true });

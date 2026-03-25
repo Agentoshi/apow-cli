@@ -20,6 +20,7 @@ export interface GrindParams {
   target: bigint;
   minerAddress: `0x${string}`;
   threads?: number;
+  signal?: AbortSignal;
   onProgress?: (attempts: bigint, hashrate: number) => void;
 }
 
@@ -92,6 +93,21 @@ export async function grindNonceParallel(params: GrindParams): Promise<GrindResu
     function elapsed(): number {
       const [s, ns] = process.hrtime(start);
       return s + ns / 1_000_000_000;
+    }
+
+    // Abort signal support — kill all workers if challenge goes stale
+    if (params.signal) {
+      if (params.signal.aborted) {
+        reject(new Error("Grind aborted: challenge stale"));
+        return;
+      }
+      params.signal.addEventListener("abort", () => {
+        if (!settled) {
+          settled = true;
+          cleanup();
+          reject(new Error("Grind aborted: challenge stale"));
+        }
+      }, { once: true });
     }
 
     for (let i = 0; i < threadCount; i++) {

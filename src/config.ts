@@ -7,7 +7,7 @@ import { base, baseSepolia } from "viem/chains";
 
 loadEnv();
 
-export type LlmProvider = "openai" | "anthropic" | "ollama" | "gemini" | "claude-code" | "codex" | "deepseek" | "qwen";
+export type LlmProvider = "openai" | "anthropic" | "ollama" | "gemini" | "claude-code" | "codex" | "deepseek" | "qwen" | "clawrouter";
 export type ChainName = "base" | "baseSepolia";
 
 export type GrinderMode = "auto" | "js";
@@ -28,6 +28,7 @@ export interface AppConfig {
   grinderMode: GrinderMode;
   gpuGrinderPath?: string;
   cpuGrinderPath?: string;
+  cudaGrinderPath?: string;
   vastIp?: string;
   vastPort?: string;
   cpuGrinderThreads: number;
@@ -47,7 +48,7 @@ const EXPENSIVE_MODELS = ["gpt-4o", "gpt-4", "claude-3-opus", "claude-3-5-sonnet
 const CHEAP_OVERRIDES = ["gpt-4o-mini", "gpt-4-mini"];
 
 function normalizeProvider(value?: string): LlmProvider {
-  if (value === "anthropic" || value === "ollama" || value === "openai" || value === "gemini" || value === "claude-code" || value === "codex" || value === "deepseek" || value === "qwen") {
+  if (value === "anthropic" || value === "ollama" || value === "openai" || value === "gemini" || value === "claude-code" || value === "codex" || value === "deepseek" || value === "qwen" || value === "clawrouter") {
     return value;
   }
 
@@ -93,7 +94,7 @@ function parseAddress(envKey: string, fallback: Address | undefined): Address {
 }
 
 function resolveLlmApiKey(provider: LlmProvider): string | undefined {
-  if (provider === "claude-code" || provider === "codex") return "";
+  if (provider === "claude-code" || provider === "codex" || provider === "clawrouter") return "";
   if (process.env.LLM_API_KEY) return process.env.LLM_API_KEY;
   switch (provider) {
     case "openai": return process.env.OPENAI_API_KEY;
@@ -123,6 +124,7 @@ export const config: AppConfig = {
   grinderMode: (process.env.GRINDER_MODE === "js" ? "js" : "auto") as GrinderMode,
   gpuGrinderPath: process.env.GPU_GRINDER_PATH,
   cpuGrinderPath: process.env.CPU_GRINDER_PATH,
+  cudaGrinderPath: process.env.CUDA_GRINDER_PATH,
   vastIp: process.env.VAST_IP,
   vastPort: process.env.VAST_PORT,
   cpuGrinderThreads: parseInt(process.env.CPU_THREADS ?? String(os.cpus().length), 10),
@@ -138,7 +140,7 @@ export function requirePrivateKey(): Hex {
 }
 
 export function requireLlmApiKey(): string {
-  if (config.llmProvider === "ollama" || config.llmProvider === "claude-code" || config.llmProvider === "codex") {
+  if (config.llmProvider === "ollama" || config.llmProvider === "claude-code" || config.llmProvider === "codex" || config.llmProvider === "clawrouter") {
     return "";
   }
 

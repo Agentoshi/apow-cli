@@ -243,12 +243,12 @@ export async function startMining(tokenId: bigint): Promise<void> {
         functionName: "getMiningChallenge",
       })) as readonly [`0x${string}`, bigint, unknown];
 
-      const [challengeNumber, target, rawSmhl] = miningChallenge;
-      const smhl = normalizeSmhlChallenge(rawSmhl);
+      let [challengeNumber, target] = [miningChallenge[0], miningChallenge[1]];
+      const smhl = normalizeSmhlChallenge(miningChallenge[2]);
 
       // Solve SMHL algorithmically (sub-millisecond)
       const smhlStart = process.hrtime();
-      const smhlSolution = solveSmhlAlgorithmic(smhl);
+      let smhlSolution = solveSmhlAlgorithmic(smhl);
       const smhlIssues = validateSmhlSolution(smhlSolution, smhl);
       if (smhlIssues.length > 0) {
         throw new Error(`SMHL generation failed: ${smhlIssues.join(", ")}`);
@@ -258,36 +258,83 @@ export async function startMining(tokenId: bigint): Promise<void> {
 
 
       // Grind nonce — native GPU/CPU if available, JS fallback
-      const nonceSpinner = ui.spinner(`Grinding nonce (${modeLabel})...`);
-      let grind: GrindResult;
+      // Abort and re-fetch challenge every STALE_CHECK_INTERVAL_MS to avoid
+      // grinding a dead nonce after another miner wins the block.
+      const STALE_CHECK_INTERVAL_MS = 20_000;
+      let grind: GrindResult | null = null;
 
-      if (useNative) {
+      while (!grind) {
+        const abortController = new AbortController();
+        const nonceSpinner = ui.spinner(`Grinding nonce (${modeLabel})...`);
+
+        // Background staleness checker — polls challenge every 20s
+        const staleTimer = setInterval(async () => {
+          try {
+            const fresh = (await publicClient.readContract({
+              address: config.agentCoinAddress,
+              abi: agentCoinAbi,
+              functionName: "getMiningChallenge",
+            })) as readonly [`0x${string}`, bigint, unknown];
+            if (fresh[0] !== challengeNumber) {
+              nonceSpinner.stop("Challenge changed — restarting grind");
+              abortController.abort();
+            }
+          } catch {
+            // RPC hiccup — don't abort, just skip this check
+          }
+        }, STALE_CHECK_INTERVAL_MS);
+
         try {
-          grind = await grindNonceNative(challengeNumber, target, account.address, grinderInfo);
-        } catch {
-          nonceSpinner.update("Native grinder failed — falling back to JS...");
-          grind = await grindNonceParallel({
-            challengeNumber,
-            target,
-            minerAddress: account.address,
-            threads: config.minerThreads,
-          });
-        }
-      } else {
-        grind = await grindNonceParallel({
-          challengeNumber,
-          target,
-          minerAddress: account.address,
-          threads: config.minerThreads,
-          onProgress: (attempts, hashrate) => {
-            const khs = (hashrate / 1000).toFixed(0);
-            nonceSpinner.update(`Grinding nonce (JS)... ${khs}k H/s (${attempts.toLocaleString()} attempts)`);
-          },
-        });
-      }
+          if (useNative) {
+            try {
+              grind = await grindNonceNative(challengeNumber, target, account.address, grinderInfo, abortController.signal);
+            } catch (err) {
+              if (abortController.signal.aborted) throw err; // re-throw abort
+              nonceSpinner.update("Native grinder failed — falling back to JS...");
+              grind = await grindNonceParallel({
+                challengeNumber,
+                target,
+                minerAddress: account.address,
+                threads: config.minerThreads,
+                signal: abortController.signal,
+              });
+            }
+          } else {
+            grind = await grindNonceParallel({
+              challengeNumber,
+              target,
+              minerAddress: account.address,
+              threads: config.minerThreads,
+              signal: abortController.signal,
+              onProgress: (attempts, hashrate) => {
+                const khs = (hashrate / 1000).toFixed(0);
+                nonceSpinner.update(`Grinding nonce (JS)... ${khs}k H/s (${attempts.toLocaleString()} attempts)`);
+              },
+            });
+          }
 
-      const khs = grind.hashrate > 0 ? (grind.hashrate / 1000).toFixed(0) : "?";
-      nonceSpinner.stop(`Nonce found (${grind.elapsed.toFixed(1)}s${grind.hashrate > 0 ? `, ${khs}k H/s` : ""})`);
+          clearInterval(staleTimer);
+          const khs = grind.hashrate > 0 ? (grind.hashrate / 1000).toFixed(0) : "?";
+          nonceSpinner.stop(`Nonce found (${grind.elapsed.toFixed(1)}s${grind.hashrate > 0 ? `, ${khs}k H/s` : ""})`);
+        } catch (err) {
+          clearInterval(staleTimer);
+          if (abortController.signal.aborted) {
+            // Challenge went stale — re-fetch and retry
+            const freshChallenge = (await publicClient.readContract({
+              address: config.agentCoinAddress,
+              abi: agentCoinAbi,
+              functionName: "getMiningChallenge",
+            })) as readonly [`0x${string}`, bigint, unknown];
+            [challengeNumber, target] = [freshChallenge[0], freshChallenge[1]];
+            const freshSmhl = normalizeSmhlChallenge(freshChallenge[2]);
+            smhlSolution = solveSmhlAlgorithmic(freshSmhl);
+            console.log(`  ${ui.dim("SMHL re-solved, grinding fresh challenge...")}`);
+            grind = null; // loop again
+            continue;
+          }
+          throw err; // non-abort error — propagate
+        }
+      }
 
       // Submit transaction with spinner
       const txSpinner = ui.spinner("Submitting transaction...");

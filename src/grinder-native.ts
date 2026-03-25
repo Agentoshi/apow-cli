@@ -28,6 +28,7 @@ import type { GrindResult } from "./grinder";
 
 export interface GrinderInfo {
   gpu: string | null;
+  cuda: string | null;
   cpu: string | null;
   remoteGpu: boolean;
 }
@@ -39,6 +40,7 @@ export interface GrinderInfo {
 export function detectGrinders(): GrinderInfo {
   return {
     gpu: detectLocalGpu(),
+    cuda: detectLocalCuda(),
     cpu: detectLocalCpu(),
     remoteGpu: !!(config.vastIp && config.vastPort),
   };
@@ -55,6 +57,23 @@ function detectLocalGpu(): string | null {
     join(process.cwd(), "local", "gpu", "grinder-gpu"),
     join(process.cwd(), "grinder-gpu"),
     join(os.homedir(), ".apow", "grinder-gpu"),
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+
+function detectLocalCuda(): string | null {
+  if (config.cudaGrinderPath) {
+    return existsSync(config.cudaGrinderPath) ? config.cudaGrinderPath : null;
+  }
+
+  const candidates = [
+    join(process.cwd(), "gpu", "grinder-cuda"),
+    join(process.cwd(), "local", "gpu", "grinder-cuda"),
+    join(process.cwd(), "grinder-cuda"),
+    join(os.homedir(), ".apow", "grinder-cuda"),
   ];
   for (const p of candidates) {
     if (existsSync(p)) return p;
@@ -80,12 +99,13 @@ function detectLocalCpu(): string | null {
 }
 
 export function hasNativeGrinders(info: GrinderInfo): boolean {
-  return !!(info.gpu || info.cpu || info.remoteGpu);
+  return !!(info.gpu || info.cuda || info.cpu || info.remoteGpu);
 }
 
 export function grinderLabel(info: GrinderInfo): string {
   const parts: string[] = [];
   if (info.remoteGpu) parts.push("CUDA (remote)");
+  if (info.cuda) parts.push("CUDA GPU");
   if (info.gpu) parts.push(process.platform === "darwin" ? "Metal GPU" : "GPU");
   if (info.cpu) parts.push(`CPU-C (${config.cpuGrinderThreads}t)`);
   if (parts.length === 0) return "JS worker_threads";
@@ -101,6 +121,7 @@ export async function grindNonceNative(
   target: bigint,
   minerAddress: `0x${string}`,
   info: GrinderInfo,
+  signal?: AbortSignal,
 ): Promise<GrindResult> {
   const targetHex = "0x" + target.toString(16).padStart(64, "0");
   const processes: ChildProcess[] = [];
@@ -132,6 +153,21 @@ export async function grindNonceNative(
           setTimeout(() => { try { kp.kill(); } catch {} }, 5000);
         } catch {}
       }
+    }
+
+    // Abort signal support — kill all grinder processes if challenge goes stale
+    if (signal) {
+      if (signal.aborted) {
+        reject(new Error("Grind aborted: challenge stale"));
+        return;
+      }
+      signal.addEventListener("abort", () => {
+        if (!settled) {
+          settled = true;
+          cleanup();
+          reject(new Error("Grind aborted: challenge stale"));
+        }
+      }, { once: true });
     }
 
     function onResult(result: GrindResult) {
@@ -175,6 +211,42 @@ export async function grindNonceNative(
           }
         }
         onFail();
+      });
+      proc.on("error", () => onFail());
+    }
+
+    // Local CUDA GPU
+    if (info.cuda) {
+      totalGrinders++;
+      // CUDA arg order: <challenge> <target> <address>
+      const proc = spawn(info.cuda, [challengeNumber, targetHex, minerAddress]);
+      processes.push(proc);
+
+      let buf = "";
+      proc.stdout.on("data", (d) => {
+        if (settled) return;
+        buf += d.toString();
+        let nl: number;
+        while ((nl = buf.indexOf("\n")) !== -1) {
+          const line = buf.slice(0, nl).trim();
+          buf = buf.slice(nl + 1);
+          if (line.startsWith("F ")) {
+            const parts = line.split(/\s+/);
+            if (parts.length >= 4) {
+              const e = parseFloat(parts[3]);
+              onResult({
+                nonce: BigInt(parts[2]),
+                attempts: 0n,
+                elapsed: e,
+                hashrate: 0,
+              });
+              return;
+            }
+          }
+        }
+      });
+      proc.on("close", () => {
+        if (!settled) onFail();
       });
       proc.on("error", () => onFail());
     }

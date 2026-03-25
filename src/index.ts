@@ -177,11 +177,20 @@ async function setupWizard(): Promise<void> {
   console.log(`  ${ui.bold("Step 3/3: LLM Provider (for minting)")}`);
   console.log(`  ${ui.dim("An LLM solves the SMHL challenge when minting your Mining Rig.")}`);
   console.log(`  ${ui.dim("Mining uses optimized solving — no LLM needed after minting.")}`);
-  const providerInput = await ui.prompt("Provider (openai/anthropic/gemini/ollama/deepseek/qwen/claude-code/codex)", "openai");
-  const provider = (["openai", "anthropic", "gemini", "ollama", "deepseek", "qwen", "claude-code", "codex"].includes(providerInput) ? providerInput : "openai") as LlmProvider;
+  console.log(`  ${ui.dim("  clawrouter (recommended) — Zero credentials. Pays with USDC from your wallet.")}`);
+  console.log(`  ${ui.dim("  openai / anthropic / gemini / deepseek / qwen — Requires API key.")}`);
+  console.log(`  ${ui.dim("  ollama / claude-code / codex — Local, no API key.")}`);
+  const providerInput = await ui.prompt("Provider", "clawrouter");
+  const provider = (["clawrouter", "openai", "anthropic", "gemini", "ollama", "deepseek", "qwen", "claude-code", "codex"].includes(providerInput) ? providerInput : "clawrouter") as LlmProvider;
   values.LLM_PROVIDER = provider;
 
-  if (provider === "ollama") {
+  if (provider === "clawrouter") {
+    ui.ok("ClawRouter x402 — no API key needed, pays with USDC from your wallet");
+    if (!values.USE_X402 && !values.RPC_URL) {
+      values.USE_X402 = "true";
+      ui.ok("Auto-enabled x402 RPC (same wallet, same USDC balance)");
+    }
+  } else if (provider === "ollama") {
     const ollamaUrl = await ui.prompt("Ollama URL", "http://127.0.0.1:11434");
     values.OLLAMA_URL = ollamaUrl;
     ui.ok(`Ollama at ${ollamaUrl}`);
@@ -198,7 +207,7 @@ async function setupWizard(): Promise<void> {
     }
   }
 
-  const defaultModel = provider === "gemini" ? "gemini-2.5-flash" : provider === "anthropic" ? "claude-sonnet-4-5-20250929" : provider === "deepseek" ? "deepseek-chat" : provider === "qwen" ? "qwen-plus" : provider === "claude-code" || provider === "codex" ? "default" : "gpt-4o-mini";
+  const defaultModel = provider === "clawrouter" ? "blockrun/eco" : provider === "gemini" ? "gemini-2.5-flash" : provider === "anthropic" ? "claude-sonnet-4-5-20250929" : provider === "deepseek" ? "deepseek-chat" : provider === "qwen" ? "qwen-plus" : provider === "claude-code" || provider === "codex" ? "default" : "gpt-4o-mini";
   const model = await ui.prompt("Model", defaultModel);
   values.LLM_MODEL = model;
 
@@ -248,8 +257,12 @@ async function main(): Promise<void> {
   const program = new Command();
 
   // SIGINT handler
-  process.on("SIGINT", () => {
+  process.on("SIGINT", async () => {
     ui.stopAll();
+    try {
+      const { stopClawRouter, isClawRouterRunning } = await import("./clawrouter");
+      if (isClawRouterRunning()) await stopClawRouter();
+    } catch {}
     console.log("");
     console.log(ui.dim("  Interrupted. Bye!"));
     process.exit(0);
@@ -325,6 +338,15 @@ async function main(): Promise<void> {
         }
       }
       await displayStats(tokenId);
+    });
+
+  program
+    .command("build-grinders")
+    .description("Compile native grinder binaries for GPU/CPU mining (~10-100x faster)")
+    .option("--cuda-arch <arch>", "CUDA architecture override (e.g., sm_89)")
+    .action(async (opts: { cudaArch?: string }) => {
+      const { buildGrinders } = await import("./build");
+      await buildGrinders(opts);
     });
 
   const walletCmd = program

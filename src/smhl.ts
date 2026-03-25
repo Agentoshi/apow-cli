@@ -343,6 +343,33 @@ async function requestQwenSolution(prompt: string): Promise<string> {
   return response.choices[0]?.message.content ?? "";
 }
 
+async function requestClawRouterSolution(prompt: string): Promise<string> {
+  const { ensureClawRouter, getClawRouterBaseUrl } = await import("./clawrouter");
+  const { requirePrivateKey } = await import("./config");
+
+  await ensureClawRouter(requirePrivateKey());
+
+  const client = new OpenAI({
+    apiKey: "x402",
+    baseURL: `${getClawRouterBaseUrl()}/v1`,
+  });
+
+  const response = await client.chat.completions.create({
+    model: config.llmModel || "blockrun/eco",
+    temperature: 0.7,
+    messages: [
+      {
+        role: "system",
+        content:
+          "You generate short lowercase word sequences that match exact constraints. Return only the words separated by spaces. Nothing else.",
+      },
+      { role: "user", content: prompt },
+    ],
+  }, { timeout: 15_000 });
+
+  return response.choices[0]?.message.content ?? "";
+}
+
 async function requestClaudeCodeSolution(prompt: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const escaped = prompt.replace(/'/g, "'\\''");
@@ -384,6 +411,8 @@ async function requestProviderSolution(prompt: string): Promise<string> {
       return requestDeepSeekSolution(prompt);
     case "qwen":
       return requestQwenSolution(prompt);
+    case "clawrouter":
+      return requestClawRouterSolution(prompt);
     case "openai":
     default:
       return requestOpenAiSolution(prompt);
