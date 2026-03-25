@@ -7,7 +7,9 @@ import { config } from "./config";
 import { detectMiners, formatHashpower, rarityLabels, selectBestMiner } from "./detect";
 import { classifyError } from "./errors";
 import { txUrl } from "./explorer";
+import type { GrindResult } from "./grinder";
 import { grindNonceParallel } from "./grinder";
+import { detectGrinders, grinderLabel, grindNonceNative, hasNativeGrinders } from "./grinder-native";
 import { normalizeSmhlChallenge, solveSmhlAlgorithmic, validateSmhlSolution } from "./smhl";
 import * as ui from "./ui";
 import { account as walletAccount, getEthBalance, publicClient, requireWallet } from "./wallet";
@@ -164,7 +166,14 @@ export async function startMining(tokenId: bigint): Promise<void> {
   let mineCount = 0;
   let runningTotal = 0n;
 
+  // Detect native grinders once at startup
+  const grinderInfo = detectGrinders();
+  const useNative = config.grinderMode !== "js" && hasNativeGrinders(grinderInfo);
+  const modeLabel = useNative ? grinderLabel(grinderInfo) : `JS (${config.minerThreads} threads)`;
+
   await showStartupBanner(tokenId);
+  console.log(`  Grinder: ${ui.bold(modeLabel)}`);
+  console.log("");
 
   while (true) {
     try {
@@ -248,20 +257,37 @@ export async function startMining(tokenId: bigint): Promise<void> {
       console.log(`  ${ui.dim(`SMHL solved (${(smhlElapsed * 1000).toFixed(1)}ms)`)}`);
 
 
-      // Grind nonce with multi-threaded spinner
-      const nonceSpinner = ui.spinner("Grinding nonce...");
-      const grind = await grindNonceParallel({
-        challengeNumber,
-        target,
-        minerAddress: account.address,
-        threads: config.minerThreads,
-        onProgress: (attempts, hashrate) => {
-          const khs = (hashrate / 1000).toFixed(0);
-          nonceSpinner.update(`Grinding nonce... ${khs}k H/s (${attempts.toLocaleString()} attempts)`);
-        },
-      });
-      const khs = (grind.hashrate / 1000).toFixed(0);
-      nonceSpinner.stop(`Grinding nonce... done (${grind.elapsed.toFixed(1)}s, ${khs}k H/s)`);
+      // Grind nonce — native GPU/CPU if available, JS fallback
+      const nonceSpinner = ui.spinner(`Grinding nonce (${modeLabel})...`);
+      let grind: GrindResult;
+
+      if (useNative) {
+        try {
+          grind = await grindNonceNative(challengeNumber, target, account.address, grinderInfo);
+        } catch {
+          nonceSpinner.update("Native grinder failed — falling back to JS...");
+          grind = await grindNonceParallel({
+            challengeNumber,
+            target,
+            minerAddress: account.address,
+            threads: config.minerThreads,
+          });
+        }
+      } else {
+        grind = await grindNonceParallel({
+          challengeNumber,
+          target,
+          minerAddress: account.address,
+          threads: config.minerThreads,
+          onProgress: (attempts, hashrate) => {
+            const khs = (hashrate / 1000).toFixed(0);
+            nonceSpinner.update(`Grinding nonce (JS)... ${khs}k H/s (${attempts.toLocaleString()} attempts)`);
+          },
+        });
+      }
+
+      const khs = grind.hashrate > 0 ? (grind.hashrate / 1000).toFixed(0) : "?";
+      nonceSpinner.stop(`Nonce found (${grind.elapsed.toFixed(1)}s${grind.hashrate > 0 ? `, ${khs}k H/s` : ""})`);
 
       // Submit transaction with spinner
       const txSpinner = ui.spinner("Submitting transaction...");

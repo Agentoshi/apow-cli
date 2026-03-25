@@ -519,7 +519,7 @@ pm2 logs
 
 **RPC rate limits:** For 3+ concurrent miners, use a dedicated RPC endpoint (Alchemy, Infura, QuickNode). Free public RPCs will not handle the load.
 
-**Want more hash power?** The nonce grinder scales linearly with CPU cores. Rent a high-core-count machine on [vast.ai](https://vast.ai/) to increase throughput. Not required, but effective for competitive mining.
+**GPU mining (v0.9.0+):** The miner auto-detects native GPU grinder binaries for 50-1000x faster nonce grinding. Build Metal (macOS) or CPU-C grinders from `local/gpu/`, or rent a CUDA GPU on [vast.ai](https://vast.ai/) with `./local/vast-setup.sh`. All grinders race in parallel -- first nonce wins. Falls back to JS automatically.
 
 ### Local LLM Setup (Ollama)
 

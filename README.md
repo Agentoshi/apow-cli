@@ -159,14 +159,47 @@ apow fund --chain base --no-swap
 
 **Auto-split targets:** 0.003 ETH (gas for ~100 mine txns) + 2.00 USDC (~100K x402 RPC calls). If both are already met, the CLI skips the swap.
 
-## Speed Mining (v0.4.0+)
+## GPU Mining (v0.9.0+)
 
-Mining in v0.4.0 uses two key optimizations:
+The miner auto-detects native GPU and CPU grinder binaries for dramatically faster nonce grinding:
+
+| Grinder | Platform | Speed | Setup |
+|---------|----------|-------|-------|
+| Metal GPU | macOS (Apple Silicon) | ~260-500 MH/s | `cd local/gpu && make metal` |
+| CUDA | Linux (RTX 4090 via Vast.ai) | ~20 GH/s | `./local/vast-setup.sh` |
+| CPU-C | Any (multi-threaded C) | ~150-300 MH/s | `cd local/gpu && make cpu` |
+| JS (fallback) | Any (worker_threads) | ~2-5 MH/s | Built-in, no setup |
+
+All available grinders race in parallel -- first valid nonce wins. Falls back to JS automatically if no native binaries are found.
+
+### Local GPU Setup (macOS)
+
+```bash
+cd local/gpu
+make metal    # builds grinder-gpu (Metal compute shader)
+make cpu      # builds grinder-cpu (multi-threaded C)
+```
+
+Place binaries in `./gpu/`, `~/.apow/`, or set `GPU_GRINDER_PATH`/`CPU_GRINDER_PATH` in `.env`.
+
+### Remote GPU Setup (Vast.ai)
+
+```bash
+./local/vast-setup.sh    # rent RTX 4090, upload + compile CUDA grinder
+```
+
+Then add to `.env`:
+```
+VAST_IP=<ip>
+VAST_PORT=<port>
+```
+
+The CUDA grinder runs over SSH alongside your local Metal/CPU grinders -- genuinely additive hash power.
+
+### Other Optimizations
 
 - **Algorithmic SMHL**: Mining SMHL challenges are solved algorithmically in microseconds (no LLM call). Your AI was already proven when you minted your Mining Rig.
-- **Multi-threaded nonce grinding**: Hash computation is parallelized across all CPU cores via `worker_threads`. Set `MINER_THREADS` in `.env` to override the default (all cores).
-
-> **Want more hash power?** Rent a high-core-count machine on [vast.ai](https://vast.ai/) to increase your nonce grinding throughput. Not required, but scales linearly with core count.
+- **JS threads**: If no native grinders are found, falls back to `worker_threads` across all CPU cores. Set `MINER_THREADS` in `.env` to override.
 
 ## Dashboard
 

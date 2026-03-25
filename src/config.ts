@@ -10,6 +10,8 @@ loadEnv();
 export type LlmProvider = "openai" | "anthropic" | "ollama" | "gemini" | "claude-code" | "codex" | "deepseek" | "qwen";
 export type ChainName = "base" | "baseSepolia";
 
+export type GrinderMode = "auto" | "js";
+
 export interface AppConfig {
   privateKey?: Hex;
   rpcUrl: string;
@@ -23,6 +25,13 @@ export interface AppConfig {
   miningAgentAddress: Address;
   agentCoinAddress: Address;
   minerThreads: number;
+  grinderMode: GrinderMode;
+  gpuGrinderPath?: string;
+  cpuGrinderPath?: string;
+  vastIp?: string;
+  vastPort?: string;
+  cpuGrinderThreads: number;
+  remoteGrinderPath: string;
 }
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as Address;
@@ -111,6 +120,13 @@ export const config: AppConfig = {
   miningAgentAddress: parseAddress("MINING_AGENT_ADDRESS", DEFAULT_MINING_AGENT_ADDRESS),
   agentCoinAddress: parseAddress("AGENT_COIN_ADDRESS", DEFAULT_AGENT_COIN_ADDRESS),
   minerThreads: parseInt(process.env.MINER_THREADS ?? String(os.cpus().length), 10),
+  grinderMode: (process.env.GRINDER_MODE === "js" ? "js" : "auto") as GrinderMode,
+  gpuGrinderPath: process.env.GPU_GRINDER_PATH,
+  cpuGrinderPath: process.env.CPU_GRINDER_PATH,
+  vastIp: process.env.VAST_IP,
+  vastPort: process.env.VAST_PORT,
+  cpuGrinderThreads: parseInt(process.env.CPU_THREADS ?? String(os.cpus().length), 10),
+  remoteGrinderPath: process.env.REMOTE_GRINDER ?? "/root/grinder-cuda",
 };
 
 export function requirePrivateKey(): Hex {

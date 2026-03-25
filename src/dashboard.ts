@@ -474,7 +474,7 @@ export function startDashboardServer(opts: DashboardOpts): http.Server {
   }
 
   function handleConfig(): string {
-    const rpcIsDefault = useX402 || rpcUrl === DEFAULT_RPC;
+    const rpcIsDefault = !useX402 && rpcUrl === DEFAULT_RPC;
     const walletCount = getWalletAddresses(walletsPath).length;
     return JSON.stringify({ rpcIsDefault, walletCount });
   }
