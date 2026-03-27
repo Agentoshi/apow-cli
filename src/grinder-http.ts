@@ -2,9 +2,9 @@
  * HTTP x402 nonce grinder — pay-per-grind GPU mining via GrindProxy.
  *
  * Sends {challenge, target, address} to a remote GPU endpoint (default:
- * grind.apow.io). Payment ($0.01 USDC) is handled automatically via the
- * x402 protocol — the server returns 402, the client signs a USDC
- * authorization and retries. No accounts, no API keys.
+ * grind.apow.io). Payment (dynamic USDC pricing based on GPU cost) is
+ * handled automatically via x402 — the server returns 402, the client
+ * signs a USDC authorization and retries. No accounts, no API keys.
  *
  * Front-running is cryptographically impossible: nonces are bound to
  * keccak256(challenge, msg.sender, nonce) — a nonce ground for address A

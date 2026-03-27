@@ -137,7 +137,7 @@ const patterns: Array<{
     test: (m) => m.includes("x402 GPU grind payment failed"),
     classify: () => ({
       category: "setup" as ErrorCategory,
-      userMessage: "Insufficient USDC for x402 GPU grinding ($0.01/grind)",
+      userMessage: "Insufficient USDC for x402 GPU grinding",
       recovery: "Send USDC to your wallet on Base, or set USE_X402_GRIND=false to disable remote grinding",
     }),
   },

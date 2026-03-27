@@ -222,7 +222,7 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
       const resp = await fetch(healthUrl, { signal: AbortSignal.timeout(5000) });
       if (resp.ok) {
         const host = new URL(grindUrl).hostname;
-        results.push({ label: `GrindProxy: ${host} ($0.01/grind)`, passed: true });
+        results.push({ label: `GrindProxy: ${host} (dynamic pricing)`, passed: true });
       } else {
         results.push({
           label: "GrindProxy unreachable (will use local grinders only)",

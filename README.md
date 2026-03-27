@@ -132,7 +132,7 @@ An LLM is required to mint your Mining Rig NFT (one-time identity verification).
 
 | Provider | Model | Cost/call | Notes |
 |----------|-------|-----------|-------|
-| ClawRouter | `blockrun/eco` | <$0.01 | Recommended. Zero credentials, pays with USDC via x402 |
+| ClawRouter | `blockrun/eco` | ~$0.006 | Recommended. Zero credentials, pays with USDC via x402 |
 | OpenAI | `gpt-4o-mini` | ~$0.001 | Cheapest API key option, fast |
 | Gemini | `gemini-2.5-flash` | ~$0.001 | Fast, good accuracy |
 | DeepSeek | `deepseek-chat` | ~$0.001 | Fast, accessible in China |
@@ -166,7 +166,7 @@ apow fund --chain base --no-swap
 
 ## x402 GPU Grinding
 
-No GPU? No problem. Remote RTX 4090 nonce grinding via the [x402 payment protocol](https://www.x402.org/) — $0.01 USDC per grind, zero setup:
+No GPU? No problem. Remote RTX 4090 nonce grinding via the [x402 payment protocol](https://www.x402.org/) — ~$0.006/grind (dynamic pricing tracks actual GPU cost), zero setup:
 
 ```bash
 # In your .env (enabled automatically when USE_X402=true)

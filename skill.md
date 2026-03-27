@@ -290,7 +290,7 @@ CHAIN=base
 | `CUDA_GRINDER_PATH` | No | auto-detected | Explicit path to local CUDA grinder binary |
 | `CPU_GRINDER_PATH` | No | auto-detected | Explicit path to CPU-C grinder binary |
 | `CPU_THREADS` | No | All CPU cores | Thread count for CPU-C grinder |
-| `USE_X402_GRIND` | No | same as `USE_X402` | Enable remote GPU grinding via x402 ($0.01/grind). Set `false` to disable even when `USE_X402=true`. |
+| `USE_X402_GRIND` | No | same as `USE_X402` | Enable remote GPU grinding via x402 (dynamic pricing, ~$0.006/grind). Set `false` to disable even when `USE_X402=true`. |
 | `GRIND_URL` | No | `https://grind.apow.io/grind` | Custom GrindProxy endpoint URL (for self-hosted grinding) |
 | `VAST_IP` | No | - | Remote VAST.ai GPU host IP (for remote CUDA mining) |
 | `VAST_PORT` | No | - | Remote VAST.ai GPU SSH port |
@@ -303,7 +303,7 @@ CHAIN=base
 
 | Provider | Model | Cost per call | Notes |
 |---|---|---|---|
-| ClawRouter | `blockrun/eco` | <$0.01 | **Recommended.** Zero credentials, pays with USDC via x402 |
+| ClawRouter | `blockrun/eco` | ~$0.006 | **Recommended.** Zero credentials, pays with USDC via x402 |
 | OpenAI | `gpt-4o-mini` | ~$0.001 | Cheapest API key option, fast, reliable |
 | Gemini | `gemini-2.5-flash` | ~$0.001 | Fast, good accuracy |
 | DeepSeek | `deepseek-chat` | ~$0.001 | Fast, accessible in China |
@@ -561,7 +561,7 @@ Supported grinders (all race in parallel -- first nonce wins, falls back to JS a
 
 ### x402 GPU Grinding (Remote RTX 4090)
 
-No GPU? Add `USE_X402_GRIND=true` to your `.env` for remote RTX 4090 nonce grinding at $0.01 per grind via the [x402 payment protocol](https://www.x402.org/). Zero setup, zero API keys — payment is automatic from your mining wallet's USDC balance.
+No GPU? Add `USE_X402_GRIND=true` to your `.env` for remote RTX 4090 nonce grinding at ~$0.006/grind (dynamic pricing) via the [x402 payment protocol](https://www.x402.org/). Zero setup, zero API keys — payment is automatic from your mining wallet's USDC balance.
 
 ```bash
 # In your .env (enabled automatically when USE_X402=true)

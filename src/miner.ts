@@ -188,7 +188,7 @@ export async function startMining(tokenId: bigint): Promise<void> {
 
   // Hint for JS-only miners without x402 grind
   if (!useNative && !useHttpGrind) {
-    console.log(`  ${ui.dim("Tip: Add USE_X402_GRIND=true for 10-100x faster mining ($0.01/grind).")}`);
+    console.log(`  ${ui.dim("Tip: Add USE_X402_GRIND=true for 10-100x faster mining (~$0.006/grind).")}`);
   }
 
   console.log("");
