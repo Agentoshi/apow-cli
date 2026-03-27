@@ -4,6 +4,7 @@ import { base } from "viem/chains";
 
 import agentCoinAbiJson from "./abi/AgentCoin.json";
 import { config } from "./config";
+import { getGrindUrl, isHttpGrinderConfigured } from "./grinder-http";
 import { publicClient, account } from "./wallet";
 import * as ui from "./ui";
 
@@ -50,7 +51,7 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
     results.push({
       label: "No RPC configured",
       passed: false,
-      fix: "Run `apow setup` to configure RPC, or set RPC_URL or USE_X402=true in .env",
+      fix: "Set USE_X402=true in .env (auto-pay with USDC), or set RPC_URL to a Base endpoint, or run `apow setup`",
     });
   }
 
@@ -182,7 +183,7 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
         results.push({
           label: `LLM API key not set for ${config.llmProvider}`,
           passed: false,
-          fix: "Set LLM_API_KEY (or OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY) in .env, or run `apow setup`",
+          fix: "Set LLM_API_KEY in .env, or switch to LLM_PROVIDER=clawrouter (zero credentials, pays with USDC)",
         });
       }
     }
@@ -211,6 +212,29 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
     }
   } catch {
     // Skip if contract addresses not configured (already caught above)
+  }
+
+  // Check: GrindProxy reachability (mining only, non-blocking)
+  if (level === "mining" && isHttpGrinderConfigured()) {
+    const grindUrl = getGrindUrl();
+    const healthUrl = grindUrl.replace(/\/grind$/, "/health");
+    try {
+      const resp = await fetch(healthUrl, { signal: AbortSignal.timeout(5000) });
+      if (resp.ok) {
+        const host = new URL(grindUrl).hostname;
+        results.push({ label: `GrindProxy: ${host} ($0.01/grind)`, passed: true });
+      } else {
+        results.push({
+          label: "GrindProxy unreachable (will use local grinders only)",
+          passed: true, // warn but don't fail — local grinders still work
+        });
+      }
+    } catch {
+      results.push({
+        label: "GrindProxy unreachable (will use local grinders only)",
+        passed: true,
+      });
+    }
   }
 
   const failures = results.filter((r) => !r.passed);

@@ -9,7 +9,7 @@ import type { Abi } from "viem";
 import { formatEther, parseEther } from "viem";
 
 import miningAgentAbiJson from "./abi/MiningAgent.json";
-import { config, isExpensiveModel, writeEnvFile, type LlmProvider } from "./config";
+import { config, isExpensiveModel, resolveDefaultModel, writeEnvFile, type LlmProvider } from "./config";
 import { detectMiners, formatHashpower, selectBestMiner } from "./detect";
 import { txUrl } from "./explorer";
 import { runFundFlow } from "./fund";
@@ -93,10 +93,23 @@ async function setupWizard(): Promise<void> {
   ui.banner(["AgentCoin Miner Setup"]);
   console.log("");
 
+  // Mode selection
+  console.log(`  ${ui.bold("How do you want to configure?")}`);
+  console.log("");
+  console.log(`  ${ui.cyan("1.")} Quick Start ${ui.dim("(recommended)")}`);
+  console.log(`     ${ui.dim("Zero credentials. Pays for RPC + LLM with USDC from your wallet.")}`);
+  console.log(`  ${ui.cyan("2.")} Custom`);
+  console.log(`     ${ui.dim("Bring your own RPC endpoint and/or LLM API key.")}`);
+  console.log("");
+  const modeInput = await ui.prompt("Choice", "1");
+  const quickStart = modeInput !== "2";
+  console.log("");
+
+  const totalSteps = quickStart ? 2 : 3;
   const values: Record<string, string> = {};
 
   // Step 1: Wallet
-  console.log(`  ${ui.bold("Step 1/3: Wallet")}`);
+  console.log(`  ${ui.bold(`Step 1/${totalSteps}: Wallet`)}`);
   const hasWallet = await ui.confirm("Do you have a Base wallet?");
 
   let privateKey: string;
@@ -148,71 +161,83 @@ async function setupWizard(): Promise<void> {
   ui.ok(`Wallet: ${addr.slice(0, 6)}...${addr.slice(-4)}`);
   console.log("");
 
-  // Step 2: RPC
-  console.log(`  ${ui.bold("Step 2/3: RPC")}`);
-  console.log(`  ${ui.dim("You need a Base RPC endpoint. Two options:")}`);
-  console.log(`  ${ui.dim("  1. Bring your own (free from Alchemy, QuickNode, etc.)")}`);
-  console.log(`  ${ui.dim("  2. Auto-pay via QuickNode x402 ($10 USDC for ~1M calls)")}`);
-  const hasRpc = await ui.confirm("Do you have a Base RPC URL?");
+  if (quickStart) {
+    // Quick Start: auto-configure x402 + clawrouter
+    console.log(`  ${ui.bold(`Step 2/${totalSteps}: Configuration`)}`);
+    values.USE_X402 = "true";
+    values.LLM_PROVIDER = "clawrouter";
+    values.LLM_MODEL = "blockrun/eco";
+    ui.ok("RPC: QuickNode x402 (auto-pay with USDC, no API key)");
+    ui.ok("LLM: ClawRouter x402 (auto-pay with USDC, no API key)");
+    console.log(`  ${ui.dim("Both services charge USDC from your mining wallet. ~$10 covers ~1M calls.")}`);
+  } else {
+    // Custom: existing 3-step flow
+    // Step 2: RPC
+    console.log(`  ${ui.bold(`Step 2/${totalSteps}: RPC`)}`);
+    console.log(`  ${ui.dim("You need a Base RPC endpoint. Two options:")}`);
+    console.log(`  ${ui.dim("  1. Bring your own (free from Alchemy, QuickNode, etc.)")}`);
+    console.log(`  ${ui.dim("  2. Auto-pay via QuickNode x402 ($10 USDC for ~1M calls)")}`);
+    const hasRpc = await ui.confirm("Do you have a Base RPC URL?");
 
-  if (hasRpc) {
-    const rpcUrl = await ui.prompt("RPC URL");
-    if (rpcUrl) {
-      values.RPC_URL = rpcUrl;
-      ui.ok(`RPC: Custom (${rpcUrl.slice(0, 40)}${rpcUrl.length > 40 ? "..." : ""})`);
+    if (hasRpc) {
+      const rpcUrl = await ui.prompt("RPC URL");
+      if (rpcUrl) {
+        values.RPC_URL = rpcUrl;
+        ui.ok(`RPC: Custom (${rpcUrl.slice(0, 40)}${rpcUrl.length > 40 ? "..." : ""})`);
+      } else {
+        ui.warn("No URL provided — using QuickNode x402");
+        values.USE_X402 = "true";
+        ui.ok("RPC: QuickNode x402 ($10 USDC for ~1M calls)");
+      }
     } else {
-      ui.warn("No URL provided — using QuickNode x402");
       values.USE_X402 = "true";
+      console.log(`  ${ui.dim("QuickNode x402 will charge $10 USDC from your mining wallet")}`);
+      console.log(`  ${ui.dim("for ~1M RPC calls. No API key or account needed.")}`);
       ui.ok("RPC: QuickNode x402 ($10 USDC for ~1M calls)");
     }
-  } else {
-    values.USE_X402 = "true";
-    console.log(`  ${ui.dim("QuickNode x402 will charge $10 USDC from your mining wallet")}`);
-    console.log(`  ${ui.dim("for ~1M RPC calls. No API key or account needed.")}`);
-    ui.ok("RPC: QuickNode x402 ($10 USDC for ~1M calls)");
-  }
-  console.log("");
+    console.log("");
 
-  // Step 3: LLM (for minting)
-  console.log(`  ${ui.bold("Step 3/3: LLM Provider (for minting)")}`);
-  console.log(`  ${ui.dim("An LLM solves the SMHL challenge when minting your Mining Rig.")}`);
-  console.log(`  ${ui.dim("Mining uses optimized solving — no LLM needed after minting.")}`);
-  console.log(`  ${ui.dim("  clawrouter (recommended) — Zero credentials. Pays with USDC from your wallet.")}`);
-  console.log(`  ${ui.dim("  openai / anthropic / gemini / deepseek / qwen — Requires API key.")}`);
-  console.log(`  ${ui.dim("  ollama / claude-code / codex — Local, no API key.")}`);
-  const providerInput = await ui.prompt("Provider", "clawrouter");
-  const provider = (["clawrouter", "openai", "anthropic", "gemini", "ollama", "deepseek", "qwen", "claude-code", "codex"].includes(providerInput) ? providerInput : "clawrouter") as LlmProvider;
-  values.LLM_PROVIDER = provider;
+    // Step 3: LLM (for minting)
+    console.log(`  ${ui.bold(`Step 3/${totalSteps}: LLM Provider (for minting)`)}`);
+    console.log(`  ${ui.dim("An LLM solves the SMHL challenge when minting your Mining Rig.")}`);
+    console.log(`  ${ui.dim("Mining uses optimized solving — no LLM needed after minting.")}`);
+    console.log(`  ${ui.dim("  clawrouter (recommended) — Zero credentials. Pays with USDC from your wallet.")}`);
+    console.log(`  ${ui.dim("  openai / anthropic / gemini / deepseek / qwen — Requires API key.")}`);
+    console.log(`  ${ui.dim("  ollama / claude-code / codex — Local, no API key.")}`);
+    const providerInput = await ui.prompt("Provider", "clawrouter");
+    const provider = (["clawrouter", "openai", "anthropic", "gemini", "ollama", "deepseek", "qwen", "claude-code", "codex"].includes(providerInput) ? providerInput : "clawrouter") as LlmProvider;
+    values.LLM_PROVIDER = provider;
 
-  if (provider === "clawrouter") {
-    ui.ok("ClawRouter x402 — no API key needed, pays with USDC from your wallet");
-    if (!values.USE_X402 && !values.RPC_URL) {
-      values.USE_X402 = "true";
-      ui.ok("Auto-enabled x402 RPC (same wallet, same USDC balance)");
-    }
-  } else if (provider === "ollama") {
-    const ollamaUrl = await ui.prompt("Ollama URL", "http://127.0.0.1:11434");
-    values.OLLAMA_URL = ollamaUrl;
-    ui.ok(`Ollama at ${ollamaUrl}`);
-  } else if (provider === "claude-code" || provider === "codex") {
-    ui.ok(`Using local ${provider} CLI — no API key needed`);
-  } else {
-    const apiKey = await ui.promptSecret("API key");
-    if (apiKey) {
-      values.LLM_API_KEY = apiKey;
-      ui.ok(`${provider} key set`);
+    if (provider === "clawrouter") {
+      ui.ok("ClawRouter x402 — no API key needed, pays with USDC from your wallet");
+      if (!values.USE_X402 && !values.RPC_URL) {
+        values.USE_X402 = "true";
+        ui.ok("Auto-enabled x402 RPC (same wallet, same USDC balance)");
+      }
+    } else if (provider === "ollama") {
+      const ollamaUrl = await ui.prompt("Ollama URL", "http://127.0.0.1:11434");
+      values.OLLAMA_URL = ollamaUrl;
+      ui.ok(`Ollama at ${ollamaUrl}`);
+    } else if (provider === "claude-code" || provider === "codex") {
+      ui.ok(`Using local ${provider} CLI — no API key needed`);
     } else {
-      ui.fail("No API key provided");
-      ui.hint(`Set LLM_API_KEY in .env later`);
+      const apiKey = await ui.promptSecret("API key");
+      if (apiKey) {
+        values.LLM_API_KEY = apiKey;
+        ui.ok(`${provider} key set`);
+      } else {
+        ui.fail("No API key provided");
+        ui.hint(`Set LLM_API_KEY in .env later`);
+      }
     }
-  }
 
-  const defaultModel = provider === "clawrouter" ? "blockrun/eco" : provider === "gemini" ? "gemini-2.5-flash" : provider === "anthropic" ? "claude-sonnet-4-5-20250929" : provider === "deepseek" ? "deepseek-chat" : provider === "qwen" ? "qwen-plus" : provider === "claude-code" || provider === "codex" ? "default" : "gpt-4o-mini";
-  const model = await ui.prompt("Model", defaultModel);
-  values.LLM_MODEL = model;
+    const defaultModel = resolveDefaultModel(provider);
+    const model = await ui.prompt("Model", defaultModel);
+    values.LLM_MODEL = model;
 
-  if (isExpensiveModel(model)) {
-    ui.warn(`${model} is expensive. Consider gpt-4o-mini for lower cost.`);
+    if (isExpensiveModel(model)) {
+      ui.warn(`${model} is expensive. Consider gpt-4o-mini for lower cost.`);
+    }
   }
 
   // Contract addresses
@@ -282,8 +307,8 @@ async function main(): Promise<void> {
 
   program
     .command("fund")
-    .description("Fund your wallet — bridge from Solana or send on Base")
-    .option("--chain <chain>", "Source chain: solana, base")
+    .description("Fund your wallet — bridge from Solana/Ethereum or send on Base")
+    .option("--chain <chain>", "Source chain: solana, ethereum, base")
     .option("--token <token>", "Source token: sol, usdc, eth")
     .option("--amount <eth>", "Target ETH amount (default: 0.005)")
     .option("--no-swap", "Skip auto-split after bridging")

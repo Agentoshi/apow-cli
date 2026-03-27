@@ -118,6 +118,30 @@ const patterns: Array<{
     }),
   },
   {
+    test: (m) => m.includes("GrindProxy") && /\b502\b/.test(m),
+    classify: () => ({
+      category: "transient" as ErrorCategory,
+      userMessage: "Remote GPU backend unavailable",
+      recovery: "GrindProxy will retry automatically. Local grinders continue racing.",
+    }),
+  },
+  {
+    test: (m) => m.includes("Remote GPU grind timed out") || (m.includes("GrindProxy") && /\b504\b/.test(m)),
+    classify: () => ({
+      category: "transient" as ErrorCategory,
+      userMessage: "Remote GPU grind timed out (90s)",
+      recovery: "High difficulty — local grinders may still find a nonce.",
+    }),
+  },
+  {
+    test: (m) => m.includes("x402 GPU grind payment failed"),
+    classify: () => ({
+      category: "setup" as ErrorCategory,
+      userMessage: "Insufficient USDC for x402 GPU grinding ($0.01/grind)",
+      recovery: "Send USDC to your wallet on Base, or set USE_X402_GRIND=false to disable remote grinding",
+    }),
+  },
+  {
     test: (m) => m.includes("INSUFFICIENT_OUTPUT_AMOUNT") || m.includes("Too little received"),
     classify: () => ({
       category: "transient",

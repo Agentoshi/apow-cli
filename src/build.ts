@@ -11,7 +11,7 @@
  */
 
 import { execSync } from "node:child_process";
-import { existsSync, mkdirSync, chmodSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, chmodSync } from "node:fs";
 import { join, dirname } from "node:path";
 import os from "node:os";
 import * as ui from "./ui";
@@ -143,6 +143,11 @@ function buildMetal(sourceDir: string): BuildResult {
       { stdio: "pipe", timeout: 60000 },
     );
     chmodSync(out, 0o755);
+    // Copy Metal shader alongside binary — grinder loads it at runtime from CWD
+    const shader = join(sourceDir, "keccak.metal");
+    if (existsSync(shader)) {
+      copyFileSync(shader, join(INSTALL_DIR, "keccak.metal"));
+    }
     return { name, success: true, path: out };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

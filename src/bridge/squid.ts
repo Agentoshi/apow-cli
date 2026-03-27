@@ -1,5 +1,5 @@
 // Squid Router bridge — deposit address flow.
-// Supports SOL→Base via Chainflip multi-hop (~1-3 minutes).
+// Supports SOL→Base and ETH→Base via Chainflip multi-hop (~1-3 minutes).
 // Requires SQUID_INTEGRATOR_ID (free, apply at squidrouter.com).
 
 import { CHAIN_IDS, TOKENS } from "./constants";
@@ -32,6 +32,14 @@ export const SQUID_ROUTES = {
     srcDecimals: 6,
     dstDecimals: 6,
   },
+  eth_to_base_eth: {
+    fromChain: CHAIN_IDS.ethereum,
+    fromToken: TOKENS.ethereum.nativeWrapped,
+    toChain: CHAIN_IDS.base,
+    toToken: TOKENS.base.nativeSquid,
+    srcDecimals: 18,
+    dstDecimals: 18,
+  },
 } as const;
 
 export interface DepositInfo {
@@ -45,7 +53,7 @@ function getIntegratorId(): string {
   const id = process.env.SQUID_INTEGRATOR_ID;
   if (!id) {
     throw new Error(
-      "SQUID_INTEGRATOR_ID is required for bridging from Solana.\n" +
+      "SQUID_INTEGRATOR_ID is required for bridging.\n" +
         "Get one free at https://app.squidrouter.com/",
     );
   }
@@ -93,6 +101,18 @@ export async function getDepositAddress(
   if (routeData.error) {
     throw new Error(
       `Squid route error: ${routeData.error.message || JSON.stringify(routeData.error)}`,
+    );
+  }
+
+  // Guard: if the route returned a transactionRequest instead of supporting
+  // deposit-address flow, the source chain likely requires a contract call
+  // (e.g., EVM chains without Chainflip deposit address support).
+  const tx = routeData.route?.transactionRequest;
+  if (tx && !routeData.route?.params?.prefer?.includes("CHAINFLIP_DEPOSIT_ADDRESS")) {
+    throw new Error(
+      "DEPOSIT_ADDRESS_UNAVAILABLE: Squid returned a contract-call route instead of a deposit address for this chain.\n" +
+        "This means the bridge requires an on-chain transaction from the source chain.\n" +
+        "Use an alternative: bridge.base.org, send ETH on Base directly, or bridge from Solana.",
     );
   }
 

@@ -55,18 +55,17 @@ If you're an AI agent, skip the interactive wizard and write the `.env` directly
 npx apow-cli wallet new
 # Captures address + private key from output (also saved to wallet-<address>.txt)
 
-# 2. Write .env directly — ZERO API keys needed
+# 2. Write .env directly — just 2 lines, ZERO API keys needed
+# USE_X402=true auto-activates clawrouter LLM + QuickNode RPC (both pay with USDC)
+# Contract addresses are built-in defaults — no need to specify them
 cat > .env << 'EOF'
 PRIVATE_KEY=0x<from step 1>
 USE_X402=true
-LLM_PROVIDER=clawrouter
-LLM_MODEL=blockrun/eco
-MINING_AGENT_ADDRESS=0xB7caD3ca5F2BD8aEC2Eb67d6E8D448099B3bC03D
-AGENT_COIN_ADDRESS=0x12577CF0D8a07363224D6909c54C056A183e13b3
 EOF
 
 # 3. Fund the wallet with ETH (gas) + USDC (x402 RPC + LLM payments)
 npx apow-cli fund --chain solana --token sol    # bridge SOL → ETH+USDC on Base
+# Or: npx apow-cli fund --chain ethereum        # bridge ETH from Ethereum mainnet
 # Or: npx apow-cli fund --chain base            # send ETH or USDC on Base directly
 # Or: ask your user to send ETH + USDC on Base directly
 
@@ -165,17 +164,18 @@ Your mining wallet needs ETH on Base for gas and the mint fee.
 
 ### Built-in Bridge: `apow fund` (Recommended)
 
-The CLI bridges from Solana via [Squid Router](https://squidrouter.com/) (Chainflip), or accepts deposits directly on Base. Auto-splits into ETH (gas) + USDC (x402 RPC):
+The CLI bridges from Solana or Ethereum via [Squid Router](https://squidrouter.com/) (Chainflip), or accepts deposits directly on Base. Auto-splits into ETH (gas) + USDC (x402 RPC):
 
 ```bash
 npx apow-cli fund                                          # Interactive: choose chain + token
 npx apow-cli fund --chain solana --token sol               # Bridge SOL → ETH+USDC on Base
 npx apow-cli fund --chain solana --token usdc              # Bridge Solana USDC → Base
+npx apow-cli fund --chain ethereum                         # Bridge ETH from Ethereum mainnet → Base
 npx apow-cli fund --chain base                             # Show address, wait for deposit
 npx apow-cli fund --chain base --no-swap                   # Skip auto-split
 ```
 
-**Solana bridging:** Generates a one-time deposit address with QR code. Send tokens from any Solana wallet (Phantom, Backpack, etc.). Requires `SQUID_INTEGRATOR_ID` in `.env` (free at [squidrouter.com](https://app.squidrouter.com/)). Bridge time: ~1-3 minutes via Chainflip.
+**Solana/Ethereum bridging:** Generates a one-time deposit address with QR code. Send tokens from any wallet (Phantom, MetaMask, etc.). Requires `SQUID_INTEGRATOR_ID` in `.env` (free at [squidrouter.com](https://app.squidrouter.com/)). Bridge time: ~1-3 minutes via Chainflip.
 
 **Auto-split:** After bridging, the CLI checks ETH and USDC balances. If either is below the minimum (0.003 ETH for gas, 2.00 USDC for x402 RPC), it swaps the needed amount via Uniswap V3 on Base. Use `--no-swap` to skip.
 
@@ -274,21 +274,24 @@ CHAIN=base
 | `PRIVATE_KEY` | Yes | - | Wallet private key (0x + 64 hex chars) |
 | `MINING_AGENT_ADDRESS` | Yes | - | Deployed MiningAgent contract address |
 | `AGENT_COIN_ADDRESS` | Yes | - | Deployed AgentCoin contract address |
-| `LLM_PROVIDER` | For minting | `openai` | LLM provider for minting: `clawrouter` (recommended, zero credentials), `openai`, `gemini`, `deepseek`, `qwen`, `anthropic`, `ollama`, `claude-code`, `codex`. Not needed for mining. |
+| `LLM_PROVIDER` | For minting | `clawrouter` if `USE_X402=true`, else `openai` | LLM provider for minting: `clawrouter` (recommended, zero credentials), `openai`, `gemini`, `deepseek`, `qwen`, `anthropic`, `ollama`, `claude-code`, `codex`. Not needed for mining. |
 | `LLM_API_KEY` | For minting* | - | API key for minting. Not needed for `clawrouter`, `ollama`, `claude-code`, `codex`, or mining. Falls back to `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY`. |
-| `LLM_MODEL` | For minting | `gpt-4o-mini` | Model identifier passed to the provider (minting only). Use `blockrun/eco` for clawrouter. |
+| `LLM_MODEL` | For minting | per-provider (e.g. `blockrun/eco`, `gpt-4o-mini`) | Model identifier passed to the provider (minting only). Auto-detected from provider if omitted. |
 | `CLAWROUTER_PORT` | No | `8402` | Port for ClawRouter local proxy (only if default is in use) |
 | `MINER_THREADS` | No | All CPU cores | Threads for JS nonce grinding (fallback if no native GPU/CPU grinder detected) |
 | `RPC_URL` | Yes* | — | Base JSON-RPC endpoint. Get a free URL from Alchemy or QuickNode. *Not needed if `USE_X402=true`. |
 | `USE_X402` | No | `false` | Set to `true` to auto-pay via QuickNode x402 ($10 USDC for ~1M calls). Replaces `RPC_URL`. |
 | `CHAIN` | No | `base` | Network selector; auto-detects `baseSepolia` if RPC URL contains "sepolia" |
 | `SOLANA_RPC_URL` | No | `https://api.mainnet-beta.solana.com` | Solana RPC endpoint (only for `apow fund --chain solana`) |
+| `ETHEREUM_RPC_URL` | No | `https://cloudflare-eth.com` | Ethereum mainnet RPC (only for `apow fund --chain ethereum`) |
 | `OLLAMA_URL` | No | `http://127.0.0.1:11434` | Ollama server URL (only if `LLM_PROVIDER=ollama`) |
 | `GRINDER_MODE` | No | `auto` | Grinder mode: `auto` (detect native binaries) or `js` (force JS worker_threads) |
 | `GPU_GRINDER_PATH` | No | auto-detected | Explicit path to Metal GPU grinder binary |
 | `CUDA_GRINDER_PATH` | No | auto-detected | Explicit path to local CUDA grinder binary |
 | `CPU_GRINDER_PATH` | No | auto-detected | Explicit path to CPU-C grinder binary |
 | `CPU_THREADS` | No | All CPU cores | Thread count for CPU-C grinder |
+| `USE_X402_GRIND` | No | same as `USE_X402` | Enable remote GPU grinding via x402 ($0.01/grind). Set `false` to disable even when `USE_X402=true`. |
+| `GRIND_URL` | No | `https://grind.apow.io/grind` | Custom GrindProxy endpoint URL (for self-hosted grinding) |
 | `VAST_IP` | No | - | Remote VAST.ai GPU host IP (for remote CUDA mining) |
 | `VAST_PORT` | No | - | Remote VAST.ai GPU SSH port |
 | `REMOTE_GRINDER` | No | `/root/grinder-cuda` | Path to CUDA binary on remote host |
@@ -555,6 +558,22 @@ Supported grinders (all race in parallel -- first nonce wins, falls back to JS a
 - **CUDA** (NVIDIA GPU): requires CUDA toolkit (`nvcc`), auto-detects GPU arch via `nvidia-smi`
 - **CPU-C** (any platform): requires `clang` or `gcc`
 - **Remote CUDA** (VAST.ai): set `VAST_IP` + `VAST_PORT` env vars for SSH-based remote grinding
+
+### x402 GPU Grinding (Remote RTX 4090)
+
+No GPU? Add `USE_X402_GRIND=true` to your `.env` for remote RTX 4090 nonce grinding at $0.01 per grind via the [x402 payment protocol](https://www.x402.org/). Zero setup, zero API keys — payment is automatic from your mining wallet's USDC balance.
+
+```bash
+# In your .env (enabled automatically when USE_X402=true)
+USE_X402_GRIND=true
+# GRIND_URL=https://grind.apow.io/grind   # default, override for self-hosted
+```
+
+The HTTP grinder races alongside all local grinders (Metal, CUDA, CPU-C, JS). First valid nonce wins; losers are cancelled. For GPU-less miners, this is a 10-100x speed improvement over JS fallback.
+
+**Front-running is cryptographically impossible:** nonces are bound to `keccak256(challenge, msg.sender, nonce)` — a nonce ground for address A is useless for address B.
+
+**Self-hosting:** Deploy your own GrindProxy with any CUDA GPU. See [apow-grind](https://github.com/Agentoshi/apow-grind) for the open-source CF Worker + RunPod Docker image. Set `GRIND_URL` to your endpoint.
 
 ### Local LLM Setup (Ollama)
 

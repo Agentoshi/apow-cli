@@ -21,7 +21,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import os from "node:os";
 import { config } from "./config";
 import type { GrindResult } from "./grinder";
@@ -31,6 +31,7 @@ export interface GrinderInfo {
   cuda: string | null;
   cpu: string | null;
   remoteGpu: boolean;
+  httpGrind: boolean;
 }
 
 /**
@@ -43,6 +44,7 @@ export function detectGrinders(): GrinderInfo {
     cuda: detectLocalCuda(),
     cpu: detectLocalCpu(),
     remoteGpu: !!(config.vastIp && config.vastPort),
+    httpGrind: config.useX402Grind && !!config.privateKey,
   };
 }
 
@@ -99,7 +101,7 @@ function detectLocalCpu(): string | null {
 }
 
 export function hasNativeGrinders(info: GrinderInfo): boolean {
-  return !!(info.gpu || info.cuda || info.cpu || info.remoteGpu);
+  return !!(info.gpu || info.cuda || info.cpu || info.remoteGpu || info.httpGrind);
 }
 
 export function grinderLabel(info: GrinderInfo): string {
@@ -189,7 +191,8 @@ export async function grindNonceNative(
     // Local Metal GPU
     if (info.gpu) {
       totalGrinders++;
-      const proc = spawn(info.gpu, [challengeNumber, minerAddress, targetHex]);
+      // Set CWD to binary's directory so Metal grinder finds keccak.metal shader
+      const proc = spawn(info.gpu, [challengeNumber, minerAddress, targetHex], { cwd: dirname(info.gpu) });
       processes.push(proc);
 
       let stdout = "";

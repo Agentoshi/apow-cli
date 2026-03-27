@@ -1,8 +1,9 @@
 // Shared chain IDs, token addresses, and types for cross-chain bridging.
 
 export const CHAIN_IDS = {
-  solana: "solana",
-  base:   "8453",
+  solana:   "solana",
+  ethereum: "1",
+  base:     "8453",
 } as const;
 
 export const TOKENS = {
@@ -10,6 +11,10 @@ export const TOKENS = {
     native: "11111111111111111111111111111111",
     nativeWrapped: "So11111111111111111111111111111111111111112",
     usdc: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+  },
+  ethereum: {
+    native: "0x0000000000000000000000000000000000000000",
+    nativeWrapped: "0xC02aaA39b223FE8D0A5827d8EE69cFde63831e7e",
   },
   base: {
     native: "0x0000000000000000000000000000000000000000",
@@ -19,7 +24,7 @@ export const TOKENS = {
   },
 } as const;
 
-export type SourceChain = "solana" | "base";
+export type SourceChain = "solana" | "ethereum" | "base";
 export type SourceToken = "native" | "usdc";
 export type BaseAsset = "eth" | "usdc";
 

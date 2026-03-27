@@ -9,6 +9,7 @@ import { classifyError } from "./errors";
 import { txUrl } from "./explorer";
 import type { GrindResult } from "./grinder";
 import { grindNonceParallel } from "./grinder";
+import { getGrindUrl, grindNonceHttp, isHttpGrinderConfigured } from "./grinder-http";
 import { detectGrinders, grinderLabel, grindNonceNative, hasNativeGrinders } from "./grinder-native";
 import { normalizeSmhlChallenge, solveSmhlAlgorithmic, validateSmhlSolution } from "./smhl";
 import * as ui from "./ui";
@@ -169,10 +170,27 @@ export async function startMining(tokenId: bigint): Promise<void> {
   // Detect native grinders once at startup
   const grinderInfo = detectGrinders();
   const useNative = config.grinderMode !== "js" && hasNativeGrinders(grinderInfo);
-  const modeLabel = useNative ? grinderLabel(grinderInfo) : `JS (${config.minerThreads} threads)`;
+  const useHttpGrind = isHttpGrinderConfigured();
+  const grindUrl = getGrindUrl();
+
+  // Build grinder label
+  const labelParts: string[] = [];
+  if (useNative) labelParts.push(grinderLabel(grinderInfo));
+  if (useHttpGrind) {
+    const host = new URL(grindUrl).hostname;
+    labelParts.push(`x402 GPU (${host})`);
+  }
+  if (labelParts.length === 0) labelParts.push(`JS (${config.minerThreads} threads)`);
+  const modeLabel = labelParts.join(" + ");
 
   await showStartupBanner(tokenId);
   console.log(`  Grinder: ${ui.bold(modeLabel)}`);
+
+  // Hint for JS-only miners without x402 grind
+  if (!useNative && !useHttpGrind) {
+    console.log(`  ${ui.dim("Tip: Add USE_X402_GRIND=true for 10-100x faster mining ($0.01/grind).")}`);
+  }
+
   console.log("");
 
   while (true) {
@@ -285,33 +303,46 @@ export async function startMining(tokenId: bigint): Promise<void> {
         }, STALE_CHECK_INTERVAL_MS);
 
         try {
+          // Race all available grinders — first valid nonce wins
+          const grinders: Promise<GrindResult>[] = [];
+
           if (useNative) {
-            try {
-              grind = await grindNonceNative(challengeNumber, target, account.address, grinderInfo, abortController.signal);
-            } catch (err) {
-              if (abortController.signal.aborted) throw err; // re-throw abort
-              nonceSpinner.update("Native grinder failed — falling back to JS...");
-              grind = await grindNonceParallel({
-                challengeNumber,
-                target,
-                minerAddress: account.address,
-                threads: config.minerThreads,
-                signal: abortController.signal,
-              });
-            }
-          } else {
-            grind = await grindNonceParallel({
+            grinders.push(
+              grindNonceNative(challengeNumber, target, account.address, grinderInfo, abortController.signal)
+                .catch((err) => {
+                  if (abortController.signal.aborted) throw err;
+                  // Native failed but don't abort the race — others may still win
+                  return new Promise<GrindResult>(() => {}); // hang forever (race will resolve via another grinder)
+                }),
+            );
+          }
+
+          if (useHttpGrind) {
+            grinders.push(
+              grindNonceHttp(challengeNumber, target, account.address, grindUrl, config.privateKey!, abortController.signal)
+                .catch((err) => {
+                  if (abortController.signal.aborted) throw err;
+                  return new Promise<GrindResult>(() => {});
+                }),
+            );
+          }
+
+          // JS fallback always runs (it's the baseline)
+          grinders.push(
+            grindNonceParallel({
               challengeNumber,
               target,
               minerAddress: account.address,
               threads: config.minerThreads,
               signal: abortController.signal,
-              onProgress: (attempts, hashrate) => {
+              onProgress: !useNative && !useHttpGrind ? (attempts, hashrate) => {
                 const khs = (hashrate / 1000).toFixed(0);
                 nonceSpinner.update(`Grinding nonce (JS)... ${khs}k H/s (${attempts.toLocaleString()} attempts)`);
-              },
-            });
-          }
+              } : undefined,
+            }),
+          );
+
+          grind = await Promise.race(grinders);
 
           clearInterval(staleTimer);
           const khs = grind.hashrate > 0 ? (grind.hashrate / 1000).toFixed(0) : "?";

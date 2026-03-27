@@ -1,12 +1,13 @@
 // Fund command — unified funding for mining on Base.
-// Accepts deposits from Solana (via Squid Router bridge) or Base (direct send),
+// Accepts deposits from Solana/Ethereum (via Squid Router bridge) or Base (direct send),
 // auto-splits into ETH (gas) + USDC (x402 RPC).
 //
 // Deposit types:
 //   1. Solana SOL     → bridge → ETH on Base → swap portion to USDC
 //   2. Solana USDC    → bridge → USDC on Base → swap portion to ETH
-//   3. Base ETH       → (already there) → swap portion to USDC
-//   4. Base USDC      → (already there) → swap portion to ETH
+//   3. Ethereum ETH   → bridge → ETH on Base → swap portion to USDC
+//   4. Base ETH       → (already there) → swap portion to USDC
+//   5. Base USDC      → (already there) → swap portion to ETH
 
 import { formatEther, formatUnits, parseEther, parseUnits } from "viem";
 
@@ -334,6 +335,109 @@ async function runSolanaFund(
 }
 
 // ---------------------------------------------------------------------------
+// Ethereum fund (Squid Router deposit address)
+// ---------------------------------------------------------------------------
+
+async function runEthereumFund(
+  baseAddress: string,
+  targetEth: number,
+): Promise<void> {
+  const priceSpinner = ui.spinner("Fetching prices...");
+  const prices = await fetchPrices();
+  priceSpinner.stop(`ETH price: $${prices.ethPriceUsd.toFixed(0)}`);
+
+  // ETH→ETH bridge is ~1:1, add 5% buffer for bridge fees
+  const amount = targetEth * 1.05;
+
+  const addrSpinner = ui.spinner("Generating deposit address...");
+  const squid = await import("./bridge/squid");
+
+  let deposit: Awaited<ReturnType<typeof squid.getDepositAddress>>;
+  try {
+    deposit = await squid.getDepositAddress(baseAddress, amount, squid.SQUID_ROUTES.eth_to_base_eth);
+  } catch (err) {
+    addrSpinner.fail("Failed to get deposit address");
+    const msg = err instanceof Error ? err.message : String(err);
+
+    if (msg.includes("DEPOSIT_ADDRESS_UNAVAILABLE")) {
+      console.log("");
+      ui.warn("Squid Router doesn't support deposit addresses for Ethereum.");
+      console.log("  Alternatives:");
+      console.log(`    ${ui.cyan("1.")} Bridge via ${ui.bold("bridge.base.org")} → paste your mining wallet as recipient`);
+      console.log(`    ${ui.cyan("2.")} Send ETH on Base directly: ${ui.cyan("apow fund --chain base")}`);
+      console.log(`    ${ui.cyan("3.")} Bridge from Solana instead: ${ui.cyan("apow fund --chain solana")}`);
+      console.log("");
+      return;
+    }
+
+    throw err;
+  }
+  addrSpinner.stop("Deposit address ready");
+
+  console.log("");
+  console.log(`  ${ui.bold("Send ETH on Ethereum mainnet to this address:")}`);
+  console.log("");
+  console.log(`  ${ui.cyan(deposit.depositAddress)}`);
+  console.log("");
+
+  await showQrCode(deposit.depositAddress);
+
+  console.log("");
+  ui.table([
+    ["Amount", `~${amount.toFixed(6)} ETH`],
+    ["You'll receive", `~${deposit.expectedReceive} ETH on Base`],
+    ["Bridge", "Squid Router (Chainflip)"],
+    ["Time", "~1-3 minutes"],
+  ]);
+  console.log("");
+
+  if (deposit.expiresAt) {
+    ui.warn(`Deposit address expires: ${deposit.expiresAt}`);
+    console.log("");
+  }
+
+  // Poll for deposit on Ethereum mainnet
+  const ethereum = await import("./bridge/ethereum");
+  const depositSpinner = ui.spinner("Waiting for ETH deposit on Ethereum mainnet... (Ctrl+C to cancel)");
+  const initialBalance = await ethereum.getAddressBalance(deposit.depositAddress);
+  let depositDetected = false;
+  const depositDeadline = Date.now() + 600_000;
+
+  while (!depositDetected && Date.now() < depositDeadline) {
+    await new Promise((r) => setTimeout(r, 3000));
+    try {
+      const currentBalance = await ethereum.getAddressBalance(deposit.depositAddress);
+      if (currentBalance > initialBalance + 0.0001) {
+        depositDetected = true;
+        depositSpinner.stop(`Deposit received! ${(currentBalance - initialBalance).toFixed(6)} ETH`);
+      }
+    } catch {
+      // Transient RPC error
+    }
+  }
+
+  if (!depositDetected) {
+    depositSpinner.fail("No ETH deposit detected after 10 minutes");
+    ui.hint("If you sent ETH, check: https://explorer.squidrouter.com");
+    return;
+  }
+
+  // Poll for bridge completion
+  const bridgeSpinner = ui.spinner("Bridging to Base... (~1-3 min)");
+  const result = await pollBridgeStatus(
+    deposit.requestId,
+    18,
+    (status) => bridgeSpinner.update(`Bridge status: ${status}`),
+  );
+
+  const received = result.received || deposit.expectedReceive;
+  bridgeSpinner.stop(`Bridge complete! ${received} ETH arrived`);
+
+  await autoSplit("eth", prices, false);
+  await showFinalBalances();
+}
+
+// ---------------------------------------------------------------------------
 // Base manual send (already on the right chain)
 // ---------------------------------------------------------------------------
 
@@ -415,14 +519,20 @@ async function runBaseFund(
 async function selectSourceChain(): Promise<SourceChain> {
   console.log("  Where are your funds?");
   console.log(`    ${ui.cyan("1.")} Solana (SOL or USDC)`);
-  console.log(`    ${ui.cyan("2.")} Base (send ETH or USDC directly)`);
+  console.log(`    ${ui.cyan("2.")} Ethereum mainnet (ETH)`);
+  console.log(`    ${ui.cyan("3.")} Base (send ETH or USDC directly)`);
   console.log("");
 
   const choice = await ui.prompt("Choice", "1");
-  return choice === "2" ? "base" : "solana";
+  if (choice === "2") return "ethereum";
+  if (choice === "3") return "base";
+  return "solana";
 }
 
 async function selectSourceToken(chain: SourceChain): Promise<SourceToken> {
+  // Ethereum only supports native ETH — skip token prompt
+  if (chain === "ethereum") return "native";
+
   const nativeLabel = chain === "solana" ? "SOL" : "ETH";
   console.log("");
   console.log("  What token?");
@@ -438,6 +548,7 @@ function parseSourceChain(value?: string): SourceChain | undefined {
   if (!value) return undefined;
   const v = value.toLowerCase();
   if (v === "solana" || v === "sol") return "solana";
+  if (v === "ethereum" || v === "eth" || v === "mainnet") return "ethereum";
   if (v === "base") return "base";
   return undefined;
 }
@@ -510,6 +621,11 @@ export async function runFundFlow(options: FundOptions): Promise<void> {
   switch (chain) {
     case "solana": {
       await runSolanaFund(baseAddress, token, targetEth);
+      break;
+    }
+
+    case "ethereum": {
+      await runEthereumFund(baseAddress, targetEth);
       break;
     }
 

@@ -39,10 +39,10 @@ npx apow-cli wallet new
 #    RPC: set RPC_URL for a free RPC, or USE_X402=true for auto-pay ($10 USDC)
 cat > .env << 'EOF'
 PRIVATE_KEY=0x<from step 1>
-LLM_PROVIDER=openai               # Required for minting only
-LLM_MODEL=gpt-4o-mini             # Required for minting only
-LLM_API_KEY=<your key>            # Required for minting only
+USE_X402=true
 EOF
+# USE_X402=true auto-activates clawrouter LLM + QuickNode RPC (both pay with USDC)
+# Contract addresses are built-in defaults — no need to specify them
 
 # 3. Fund the wallet (bridge from any chain, auto-splits into ETH + USDC)
 npx apow-cli fund --chain solana --token sol    # bridge SOL → ETH+USDC on Base
@@ -77,7 +77,7 @@ If you prefer to do it yourself:
 # 1. Interactive setup: wallet, RPC, LLM config
 npx apow-cli setup
 
-# 2. Fund your wallet (bridge from Solana or send ETH directly)
+# 2. Fund your wallet (bridge from Solana/Ethereum or send ETH directly)
 npx apow-cli fund
 
 # 3. Mint a mining rig NFT
@@ -92,7 +92,7 @@ npx apow-cli mine
 | Command | Description |
 |---------|-------------|
 | `apow setup` | Interactive setup wizard: configure wallet, RPC, and LLM |
-| `apow fund` | Fund your wallet: bridge from Solana or send on Base, auto-split ETH+USDC |
+| `apow fund` | Fund your wallet: bridge from Solana/Ethereum or send on Base, auto-split ETH+USDC |
 | `apow wallet new` | Generate a new mining wallet |
 | `apow wallet show` | Show configured wallet address |
 | `apow wallet export` | Export your wallet's private key |
@@ -110,13 +110,14 @@ Create a `.env` file or use `apow setup`:
 
 ```bash
 PRIVATE_KEY=0x...              # Your wallet private key
-RPC_URL=https://...            # Your Base RPC URL (free from Alchemy, QuickNode, etc.)
-# USE_X402=true                # Or: auto-pay via QuickNode x402 ($10 USDC for ~1M calls)
-LLM_PROVIDER=openai            # openai | gemini | deepseek | qwen | anthropic | ollama (for minting)
-LLM_MODEL=gpt-4o-mini         # Required for minting only; mining uses optimized SMHL solving
-LLM_API_KEY=sk-...             # Required for minting only
+USE_X402=true                  # Auto-pay RPC + LLM via x402 ($10 USDC for ~1M calls, zero API keys)
+# RPC_URL=https://...          # Or: bring your own RPC (free from Alchemy, QuickNode, etc.)
+# LLM_PROVIDER=clawrouter     # clawrouter (auto with x402) | openai | gemini | deepseek | qwen | anthropic | ollama (for minting)
+# LLM_MODEL=blockrun/eco      # Auto-detected per provider; override only if needed
+# LLM_API_KEY=sk-...          # Not needed with clawrouter/ollama; required for openai/gemini/etc.
 # Bridging (only for `apow fund`)
 # SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
+# ETHEREUM_RPC_URL=https://cloudflare-eth.com
 # SQUID_INTEGRATOR_ID=          # free, get at squidrouter.com
 # Contract addresses (defaults built-in, override only if needed)
 # MINING_AGENT_ADDRESS=0xB7caD3ca5F2BD8aEC2Eb67d6E8D448099B3bC03D
@@ -131,7 +132,8 @@ An LLM is required to mint your Mining Rig NFT (one-time identity verification).
 
 | Provider | Model | Cost/call | Notes |
 |----------|-------|-----------|-------|
-| OpenAI | `gpt-4o-mini` | ~$0.001 | Recommended. Cheapest, fastest |
+| ClawRouter | `blockrun/eco` | <$0.01 | Recommended. Zero credentials, pays with USDC via x402 |
+| OpenAI | `gpt-4o-mini` | ~$0.001 | Cheapest API key option, fast |
 | Gemini | `gemini-2.5-flash` | ~$0.001 | Fast, good accuracy |
 | DeepSeek | `deepseek-chat` | ~$0.001 | Fast, accessible in China |
 | Qwen | `qwen-plus` | ~$0.002 | Alibaba Cloud |
@@ -140,12 +142,15 @@ An LLM is required to mint your Mining Rig NFT (one-time identity verification).
 
 ## Funding (v0.7.0+)
 
-Mining requires two assets on Base: **ETH** (gas) and **USDC** (x402 RPC). The `fund` command bridges from Solana or accepts deposits on Base, and auto-splits into both:
+Mining requires two assets on Base: **ETH** (gas) and **USDC** (x402 RPC). The `fund` command bridges from Solana or Ethereum, or accepts deposits on Base, and auto-splits into both:
 
 ```bash
 # From Solana (deposit address — send from any wallet, QR code included)
 apow fund --chain solana --token sol              # bridge SOL → ETH, auto-swap portion to USDC
 apow fund --chain solana --token usdc             # bridge USDC, auto-swap portion to ETH
+
+# From Ethereum mainnet
+apow fund --chain ethereum                        # bridge ETH → ETH on Base, auto-swap portion to USDC
 
 # Already on Base
 apow fund --chain base --token eth                # show address, wait for deposit, auto-split
@@ -155,32 +160,45 @@ apow fund --chain base --token usdc               # show address, wait for depos
 apow fund --chain base --no-swap
 ```
 
-**Solana bridging:** Uses [Squid Router](https://squidrouter.com/) (Chainflip). Generates a one-time deposit address with QR code — send from Phantom, Backpack, or any Solana wallet. Requires `SQUID_INTEGRATOR_ID` in `.env` (free at [squidrouter.com](https://app.squidrouter.com/)).
+**Solana/Ethereum bridging:** Uses [Squid Router](https://squidrouter.com/) (Chainflip). Generates a one-time deposit address with QR code — send from any wallet. Requires `SQUID_INTEGRATOR_ID` in `.env` (free at [squidrouter.com](https://app.squidrouter.com/)).
 
 **Auto-split targets:** 0.003 ETH (gas for ~100 mine txns) + 2.00 USDC (~100K x402 RPC calls). If both are already met, the CLI skips the swap.
 
-## GPU Mining (v0.9.0+)
+## x402 GPU Grinding
 
-The miner auto-detects native GPU and CPU grinder binaries for dramatically faster nonce grinding:
-
-| Grinder | Platform | Speed | Setup |
-|---------|----------|-------|-------|
-| Metal GPU | macOS (Apple Silicon) | ~260-500 MH/s | `cd local/gpu && make metal` |
-| CUDA | Linux (RTX 4090 via Vast.ai) | ~20 GH/s | `./local/vast-setup.sh` |
-| CPU-C | Any (multi-threaded C) | ~150-300 MH/s | `cd local/gpu && make cpu` |
-| JS (fallback) | Any (worker_threads) | ~2-5 MH/s | Built-in, no setup |
-
-All available grinders race in parallel -- first valid nonce wins. Falls back to JS automatically if no native binaries are found.
-
-### Local GPU Setup (macOS)
+No GPU? No problem. Remote RTX 4090 nonce grinding via the [x402 payment protocol](https://www.x402.org/) — $0.01 USDC per grind, zero setup:
 
 ```bash
-cd local/gpu
-make metal    # builds grinder-gpu (Metal compute shader)
-make cpu      # builds grinder-cpu (multi-threaded C)
+# In your .env (enabled automatically when USE_X402=true)
+USE_X402_GRIND=true
 ```
 
-Place binaries in `./gpu/`, `~/.apow/`, or set `GPU_GRINDER_PATH`/`CPU_GRINDER_PATH` in `.env`.
+The HTTP grinder races alongside any local grinders you have. First valid nonce wins. Front-running is cryptographically impossible — nonces are bound to `keccak256(challenge, msg.sender, nonce)`.
+
+| Config | Description |
+|--------|-------------|
+| `USE_X402_GRIND` | Enable remote GPU grinding (default: same as `USE_X402`) |
+| `GRIND_URL` | Custom GrindProxy endpoint (default: `https://grind.apow.io/grind`) |
+
+Self-host your own GrindProxy: see [apow-grind](https://github.com/Agentoshi/apow-grind).
+
+## GPU Mining (v0.9.2+)
+
+The miner auto-detects native GPU and CPU grinder binaries for dramatically faster nonce grinding. Source files ship with the npm package — run `apow build-grinders` to compile and install to `~/.apow/`:
+
+```bash
+npx apow-cli build-grinders              # auto-detects compilers + GPU arch
+npx apow-cli build-grinders --cuda-arch sm_89  # override CUDA architecture
+```
+
+| Grinder | Platform | Speed | Requirements |
+|---------|----------|-------|--------------|
+| Metal GPU | macOS (Apple Silicon) | ~260-500 MH/s | Xcode CLI tools (`clang`) |
+| CUDA | NVIDIA GPU | ~20 GH/s | CUDA toolkit (`nvcc`) |
+| CPU-C | Any (multi-threaded C) | ~150-300 MH/s | `clang` or `gcc` |
+| JS (fallback) | Any (worker_threads) | ~2-5 MH/s | Built-in, no setup |
+
+All available grinders race in parallel — first valid nonce wins. Falls back to JS automatically if no native binaries are found.
 
 ### Remote GPU Setup (Vast.ai)
 
@@ -194,7 +212,7 @@ VAST_IP=<ip>
 VAST_PORT=<port>
 ```
 
-The CUDA grinder runs over SSH alongside your local Metal/CPU grinders -- genuinely additive hash power.
+The CUDA grinder runs over SSH alongside your local Metal/CPU grinders — genuinely additive hash power.
 
 ### Other Optimizations
 

@@ -33,12 +33,12 @@ export interface AppConfig {
   vastPort?: string;
   cpuGrinderThreads: number;
   remoteGrinderPath: string;
+  grindUrl?: string;
+  useX402Grind: boolean;
 }
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as Address;
 
-const DEFAULT_LLM_PROVIDER: LlmProvider = "openai";
-const DEFAULT_LLM_MODEL = "gpt-4o-mini";
 const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 const DEFAULT_CHAIN_NAME: ChainName = "base";
 const DEFAULT_MINING_AGENT_ADDRESS = "0xB7caD3ca5F2BD8aEC2Eb67d6E8D448099B3bC03D" as Address;
@@ -47,12 +47,26 @@ const DEFAULT_AGENT_COIN_ADDRESS = "0x12577CF0D8a07363224D6909c54C056A183e13b3" 
 const EXPENSIVE_MODELS = ["gpt-4o", "gpt-4", "claude-3-opus", "claude-3-5-sonnet"];
 const CHEAP_OVERRIDES = ["gpt-4o-mini", "gpt-4-mini"];
 
-function normalizeProvider(value?: string): LlmProvider {
+function normalizeProvider(value?: string, useX402?: boolean): LlmProvider {
   if (value === "anthropic" || value === "ollama" || value === "openai" || value === "gemini" || value === "claude-code" || value === "codex" || value === "deepseek" || value === "qwen" || value === "clawrouter") {
     return value;
   }
 
-  return DEFAULT_LLM_PROVIDER;
+  // No explicit provider: x402 users get clawrouter (zero-credential stack), others get openai
+  return useX402 ? "clawrouter" : "openai";
+}
+
+export function resolveDefaultModel(provider: LlmProvider): string {
+  switch (provider) {
+    case "clawrouter": return "blockrun/eco";
+    case "gemini": return "gemini-2.5-flash";
+    case "anthropic": return "claude-sonnet-4-5-20250929";
+    case "deepseek": return "deepseek-chat";
+    case "qwen": return "qwen-plus";
+    case "claude-code":
+    case "codex": return "default";
+    default: return "gpt-4o-mini";
+  }
 }
 
 function resolveChainName(): ChainName {
@@ -107,14 +121,16 @@ function resolveLlmApiKey(provider: LlmProvider): string | undefined {
 }
 
 const chainName = resolveChainName();
+const useX402 = process.env.USE_X402 === "true";
+const resolvedProvider = normalizeProvider(process.env.LLM_PROVIDER, useX402);
 
 export const config: AppConfig = {
   privateKey: parsePrivateKey(process.env.PRIVATE_KEY),
   rpcUrl: process.env.RPC_URL ?? "",
-  useX402: process.env.USE_X402 === "true",
-  llmProvider: normalizeProvider(process.env.LLM_PROVIDER),
-  llmApiKey: resolveLlmApiKey(normalizeProvider(process.env.LLM_PROVIDER)),
-  llmModel: process.env.LLM_MODEL ?? DEFAULT_LLM_MODEL,
+  useX402,
+  llmProvider: resolvedProvider,
+  llmApiKey: resolveLlmApiKey(resolvedProvider),
+  llmModel: process.env.LLM_MODEL ?? resolveDefaultModel(resolvedProvider),
   ollamaUrl: process.env.OLLAMA_URL ?? DEFAULT_OLLAMA_URL,
   chain: chainName === "baseSepolia" ? baseSepolia : base,
   chainName,
@@ -129,6 +145,10 @@ export const config: AppConfig = {
   vastPort: process.env.VAST_PORT,
   cpuGrinderThreads: parseInt(process.env.CPU_THREADS ?? String(os.cpus().length), 10),
   remoteGrinderPath: process.env.REMOTE_GRINDER ?? "/root/grinder-cuda",
+  grindUrl: process.env.GRIND_URL,
+  useX402Grind: process.env.USE_X402_GRIND !== undefined
+    ? process.env.USE_X402_GRIND === "true"
+    : useX402, // defaults to USE_X402 value when not explicitly set
 };
 
 export function requirePrivateKey(): Hex {
