@@ -35,6 +35,7 @@ export interface AppConfig {
   remoteGrinderPath: string;
   grindUrl?: string;
   useX402Grind: boolean;
+  staleCheckIntervalMs: number;
 }
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as Address;
@@ -149,6 +150,7 @@ export const config: AppConfig = {
   useX402Grind: process.env.USE_X402_GRIND !== undefined
     ? process.env.USE_X402_GRIND === "true"
     : useX402, // defaults to USE_X402 value when not explicitly set
+  staleCheckIntervalMs: parseInt(process.env.STALE_CHECK_INTERVAL ?? "60", 10) * 1000,
 };
 
 export function requirePrivateKey(): Hex {

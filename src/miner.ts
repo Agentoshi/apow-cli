@@ -276,16 +276,18 @@ export async function startMining(tokenId: bigint): Promise<void> {
 
 
       // Grind nonce — native GPU/CPU if available, JS fallback
-      // Abort and re-fetch challenge every STALE_CHECK_INTERVAL_MS to avoid
-      // grinding a dead nonce after another miner wins the block.
-      const STALE_CHECK_INTERVAL_MS = 20_000;
+      // Abort and re-fetch challenge periodically to avoid grinding a dead
+      // nonce after another miner wins the block. Configurable via
+      // STALE_CHECK_INTERVAL env var (seconds, default 60).
+      const staleCheckMs = config.staleCheckIntervalMs;
       let grind: GrindResult | null = null;
+      let staleRestarts = 0;
 
       while (!grind) {
         const abortController = new AbortController();
         const nonceSpinner = ui.spinner(`Grinding nonce (${modeLabel})...`);
 
-        // Background staleness checker — polls challenge every 20s
+        // Background staleness checker
         const staleTimer = setInterval(async () => {
           try {
             const fresh = (await publicClient.readContract({
@@ -294,13 +296,14 @@ export async function startMining(tokenId: bigint): Promise<void> {
               functionName: "getMiningChallenge",
             })) as readonly [`0x${string}`, bigint, unknown];
             if (fresh[0] !== challengeNumber) {
-              nonceSpinner.stop("Challenge changed — restarting grind");
+              staleRestarts++;
+              nonceSpinner.stop(`Challenge changed — restarting grind (stale #${staleRestarts})`);
               abortController.abort();
             }
           } catch {
             // RPC hiccup — don't abort, just skip this check
           }
-        }, STALE_CHECK_INTERVAL_MS);
+        }, staleCheckMs);
 
         try {
           // Race all available grinders — first valid nonce wins
@@ -312,6 +315,7 @@ export async function startMining(tokenId: bigint): Promise<void> {
                 .catch((err) => {
                   if (abortController.signal.aborted) throw err;
                   // Native failed but don't abort the race — others may still win
+                  console.log(`  ${ui.dim(`Native grinder error: ${err instanceof Error ? err.message : String(err)}`)}`);
                   return new Promise<GrindResult>(() => {}); // hang forever (race will resolve via another grinder)
                 }),
             );
@@ -322,6 +326,8 @@ export async function startMining(tokenId: bigint): Promise<void> {
               grindNonceHttp(challengeNumber, target, account.address, grindUrl, config.privateKey!, abortController.signal)
                 .catch((err) => {
                   if (abortController.signal.aborted) throw err;
+                  // Log x402 errors visibly — payment failures, timeouts, etc.
+                  console.log(`  ${ui.dim(`x402 GPU grinder error: ${err instanceof Error ? err.message : String(err)}`)}`);
                   return new Promise<GrindResult>(() => {});
                 }),
             );
@@ -360,6 +366,10 @@ export async function startMining(tokenId: bigint): Promise<void> {
             const freshSmhl = normalizeSmhlChallenge(freshChallenge[2]);
             smhlSolution = solveSmhlAlgorithmic(freshSmhl);
             console.log(`  ${ui.dim("SMHL re-solved, grinding fresh challenge...")}`);
+            if (staleRestarts >= 3 && staleRestarts % 3 === 0) {
+              ui.warn(`Challenge has gone stale ${staleRestarts} times — grinder may be too slow for current difficulty.`);
+              ui.warn(`Tip: increase STALE_CHECK_INTERVAL (current: ${staleCheckMs / 1000}s) or use a faster grinder.`);
+            }
             grind = null; // loop again
             continue;
           }
