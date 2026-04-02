@@ -472,9 +472,9 @@ export async function startMining(tokenId: bigint): Promise<void> {
             );
           }
 
-          // JS grinder only runs when no native or HTTP grinders are active
-          // (avoids wasting CPU cores that CPU-C needs)
-          if (!useNative && !useHttpGrind) {
+          // JS grinder runs unless local native grinders are active.
+          // Local CPU-C needs those cores, but x402 is remote — no conflict.
+          if (!useNative) {
             grinders.push(
               grindNonceParallel({
                 challengeNumber,
@@ -482,10 +482,10 @@ export async function startMining(tokenId: bigint): Promise<void> {
                 minerAddress: account.address,
                 threads: config.minerThreads,
                 signal: abortController.signal,
-                onProgress: (attempts, hashrate) => {
+                onProgress: !useHttpGrind ? (attempts, hashrate) => {
                   const khs = (hashrate / 1000).toFixed(0);
                   nonceSpinner.update(`Grinding nonce (JS)... ${khs}k H/s (${attempts.toLocaleString()} attempts)`);
-                },
+                } : undefined,
               }),
             );
           }
