@@ -67,7 +67,7 @@ export async function grindNonceHttp(
   if (!response.ok) {
     const body = await response.text().catch(() => "");
     if (response.status === 402) {
-      throw new Error("x402 GPU grind payment failed — insufficient USDC on Base");
+      throw new Error(`x402 GPU payment failed (402): ${body.slice(0, 300) || "no response body"}`);
     }
     if (response.status === 504) {
       throw new Error("Remote GPU grind timed out (90s)");

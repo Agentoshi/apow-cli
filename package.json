@@ -1,6 +1,6 @@
 {
   "name": "apow-cli",
-  "version": "0.9.5",
+  "version": "0.10.0",
   "description": "Mine AGENT tokens on Base L2 with Agentic Proof of Work",
   "keywords": [
     "apow",
@@ -45,10 +45,11 @@
   },
   "dependencies": {
     "@blockrun/clawrouter": "^0.12.81",
-    "@x402/evm": "^2.8.0",
-    "@x402/fetch": "^2.8.0",
+    "@noble/hashes": "^1.8.0",
     "@quicknode/x402": "^0.1.2",
     "@solana/web3.js": "^1.98.0",
+    "@x402/evm": "^2.8.0",
+    "@x402/fetch": "^2.8.0",
     "commander": "^14.0.0",
     "dotenv": "^17.2.3",
     "openai": "^6.6.0",

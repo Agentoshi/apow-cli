@@ -16,7 +16,7 @@ import { join, dirname } from "node:path";
 import os from "node:os";
 import * as ui from "./ui";
 
-const INSTALL_DIR = join(os.homedir(), ".apow");
+export const INSTALL_DIR = join(os.homedir(), ".apow");
 
 interface BuildResult {
   name: string;
@@ -25,7 +25,7 @@ interface BuildResult {
   error?: string;
 }
 
-function findSourceDir(): string | null {
+export function findSourceDir(): string | null {
   // Check relative to this file's compiled location (dist/)
   const fromDist = join(dirname(__dirname), "local", "gpu");
   if (existsSync(join(fromDist, "grinder-cpu.c"))) return fromDist;
@@ -40,7 +40,7 @@ function findSourceDir(): string | null {
   return null;
 }
 
-function which(cmd: string): boolean {
+export function which(cmd: string): boolean {
   try {
     execSync(`which ${cmd}`, { stdio: "ignore" });
     return true;
@@ -64,7 +64,7 @@ function detectCudaArch(): string | null {
   return null;
 }
 
-function buildCpuC(sourceDir: string): BuildResult {
+export function buildCpuC(sourceDir: string): BuildResult {
   const src = join(sourceDir, "grinder-cpu.c");
   const out = join(INSTALL_DIR, "grinder-cpu");
   const name = "CPU-C";
@@ -92,7 +92,7 @@ function buildCpuC(sourceDir: string): BuildResult {
   }
 }
 
-function buildCuda(sourceDir: string, archOverride?: string): BuildResult {
+export function buildCuda(sourceDir: string, archOverride?: string): BuildResult {
   const src = join(sourceDir, "grinder-cuda.cu");
   const out = join(INSTALL_DIR, "grinder-cuda");
   const name = "CUDA";
@@ -120,7 +120,7 @@ function buildCuda(sourceDir: string, archOverride?: string): BuildResult {
   }
 }
 
-function buildMetal(sourceDir: string): BuildResult {
+export function buildMetal(sourceDir: string): BuildResult {
   const src = join(sourceDir, "grinder.m");
   const out = join(INSTALL_DIR, "grinder-gpu");
   const name = "Metal GPU";

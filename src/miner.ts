@@ -1,8 +1,10 @@
 import type { Abi } from "viem";
 import { encodePacked, formatEther, keccak256 } from "viem";
+import { existsSync, mkdirSync } from "node:fs";
 
 import agentCoinAbiJson from "./abi/AgentCoin.json";
 import miningAgentAbiJson from "./abi/MiningAgent.json";
+import { buildCpuC, buildMetal, findSourceDir, INSTALL_DIR } from "./build";
 import { config } from "./config";
 import { detectMiners, formatHashpower, rarityLabels, selectBestMiner } from "./detect";
 import { classifyError } from "./errors";
@@ -11,6 +13,7 @@ import type { GrindResult } from "./grinder";
 import { grindNonceParallel } from "./grinder";
 import { getGrindUrl, grindNonceHttp, isHttpGrinderConfigured } from "./grinder-http";
 import { detectGrinders, grinderLabel, grindNonceNative, hasNativeGrinders } from "./grinder-native";
+import type { GrinderInfo } from "./grinder-native";
 import { normalizeSmhlChallenge, solveSmhlAlgorithmic, validateSmhlSolution } from "./smhl";
 import * as ui from "./ui";
 import { account as walletAccount, getEthBalance, publicClient, requireWallet } from "./wallet";
@@ -68,6 +71,78 @@ async function waitForNextBlock(lastMineBlock: bigint): Promise<void> {
     await sleep(500);
   }
   throw new Error("Timed out waiting for next block (60s)");
+}
+
+function estimateHashrate(grinderInfo: GrinderInfo, useNative: boolean, useHttpGrind: boolean): number {
+  if (useHttpGrind) return 20_000_000_000; // 20 GH/s
+  if (!useNative) return 25_000_000; // 25 MH/s (optimized JS)
+  let rate = 0;
+  if (grinderInfo.gpu) rate += 500_000_000; // 500 MH/s Metal
+  if (grinderInfo.cpu) rate += 300_000_000; // 300 MH/s CPU-C
+  if (grinderInfo.cuda) rate += 20_000_000_000; // 20 GH/s local CUDA
+  if (grinderInfo.remoteGpu) rate += 20_000_000_000; // 20 GH/s remote CUDA
+  return rate || 25_000_000;
+}
+
+function formatRate(rate: number): string {
+  if (rate >= 1_000_000_000) return `${(rate / 1_000_000_000).toFixed(1)} GH/s`;
+  if (rate >= 1_000_000) return `${(rate / 1_000_000).toFixed(0)} MH/s`;
+  return `${(rate / 1_000).toFixed(0)} kH/s`;
+}
+
+function formatExpectedHashes(n: bigint): string {
+  if (n >= 1_000_000_000n) return `${Number(n / 1_000_000_000n)}G`;
+  if (n >= 1_000_000n) return `${Number(n / 1_000_000n)}M`;
+  if (n >= 1_000n) return `${Number(n / 1_000n)}K`;
+  return String(n);
+}
+
+function difficultyBits(target: bigint): number {
+  if (target === 0n) return 256;
+  let bits = 0;
+  let t = (2n ** 256n - 1n) / target;
+  while (t > 1n) { bits++; t >>= 1n; }
+  return bits;
+}
+
+function formatTime(seconds: number): string {
+  if (seconds < 60) return `${seconds.toFixed(0)}s`;
+  if (seconds < 3600) return `${(seconds / 60).toFixed(1)} min`;
+  return `${(seconds / 3600).toFixed(1)} hr`;
+}
+
+function autoBuildGrinders(): boolean {
+  const sourceDir = findSourceDir();
+  if (!sourceDir) return false;
+
+  console.log(`  ${ui.dim("Native grinders not found — auto-building (first mine only)...")}`);
+
+  if (!existsSync(INSTALL_DIR)) {
+    mkdirSync(INSTALL_DIR, { recursive: true });
+  }
+
+  let built = 0;
+
+  const cpuResult = buildCpuC(sourceDir);
+  if (cpuResult.success) {
+    console.log(`    ${ui.green("CPU-C")} grinder built → ${ui.dim(cpuResult.path!)}`);
+    built++;
+  }
+
+  if (process.platform === "darwin") {
+    const metalResult = buildMetal(sourceDir);
+    if (metalResult.success) {
+      console.log(`    ${ui.green("Metal GPU")} grinder built → ${ui.dim(metalResult.path!)}`);
+      built++;
+    }
+  }
+
+  if (built > 0) {
+    console.log(`  ${ui.green("Native grinders built!")} Re-detecting...`);
+  } else {
+    console.log(`  ${ui.dim("Auto-build failed (no C compiler). Install Xcode CLI tools or gcc, then run: apow build-grinders")}`);
+  }
+  return built > 0;
 }
 
 async function grindNonce(
@@ -167,11 +242,20 @@ export async function startMining(tokenId: bigint): Promise<void> {
   let mineCount = 0;
   let runningTotal = 0n;
 
-  // Detect native grinders once at startup
-  const grinderInfo = detectGrinders();
-  const useNative = config.grinderMode !== "js" && hasNativeGrinders(grinderInfo);
+  // Detect native grinders — auto-build if none found
+  let grinderInfo = detectGrinders();
+  let useNative = config.grinderMode !== "js" && !!(grinderInfo.gpu || grinderInfo.cuda || grinderInfo.cpu || grinderInfo.remoteGpu);
   const useHttpGrind = isHttpGrinderConfigured();
   const grindUrl = getGrindUrl();
+
+  // Auto-build native grinders on first mine if none detected
+  if (!useNative && !useHttpGrind && config.grinderMode !== "js") {
+    const built = autoBuildGrinders();
+    if (built) {
+      grinderInfo = detectGrinders();
+      useNative = !!(grinderInfo.gpu || grinderInfo.cuda || grinderInfo.cpu || grinderInfo.remoteGpu);
+    }
+  }
 
   // Build grinder label
   const labelParts: string[] = [];
@@ -181,14 +265,59 @@ export async function startMining(tokenId: bigint): Promise<void> {
     labelParts.push(`x402 GPU (${host})`);
   }
   if (labelParts.length === 0) labelParts.push(`JS (${config.minerThreads} threads)`);
-  const modeLabel = labelParts.join(" + ");
+  let modeLabel = labelParts.join(" + ");
 
   await showStartupBanner(tokenId);
   console.log(`  Grinder: ${ui.bold(modeLabel)}`);
 
-  // Hint for JS-only miners without x402 grind
-  if (!useNative && !useHttpGrind) {
-    console.log(`  ${ui.dim("Tip: Add USE_X402_GRIND=true for 10-100x faster mining (~$0.006/grind).")}`);
+  // Difficulty-aware preflight gate
+  const preflight = (await publicClient.readContract({
+    address: config.agentCoinAddress,
+    abi: agentCoinAbi,
+    functionName: "getMiningChallenge",
+  })) as readonly [`0x${string}`, bigint, unknown];
+
+  const preflightTarget = preflight[1];
+  const expectedHashes = preflightTarget > 0n ? (2n ** 256n) / preflightTarget : 0n;
+  const estHashrate = estimateHashrate(grinderInfo, useNative, useHttpGrind);
+  const estimatedSeconds = expectedHashes > 0n ? Number(expectedHashes) / estHashrate : 0;
+  const bits = difficultyBits(preflightTarget);
+  const staleCheckSeconds = config.staleCheckIntervalMs / 1000;
+
+  console.log(`  Difficulty: 2^${bits} (~${formatExpectedHashes(expectedHashes)} hashes expected)`);
+  console.log(`  Est. speed: ${formatRate(estHashrate)} (${modeLabel})`);
+  console.log(`  Est. time:  ~${formatTime(estimatedSeconds)} per mine`);
+
+  if (estimatedSeconds > 300) {
+    console.log("");
+    ui.warn(`Your grinder (~${formatRate(estHashrate)}) is far too slow for current difficulty.`);
+    console.log(`    Expected time per mine: ~${formatTime(estimatedSeconds)} (challenges go stale every ${staleCheckSeconds}s).`);
+    console.log("");
+    console.log(`    Fix options:`);
+    console.log(`    1. Run ${ui.cyan("apow build-grinders")} for 100x faster local mining (~500 MH/s)`);
+    console.log(`    2. Add USDC to wallet for x402 GPU mining (~20 GH/s, ~$0.006/mine)`);
+    console.log(`    3. Set up VAST.ai CUDA for ~20 GH/s (see docs)`);
+    console.log("");
+    const proceed = await ui.confirm("Mining is strongly discouraged at this speed. Continue anyway?");
+    if (!proceed) {
+      console.log(`  ${ui.dim("Exiting. Build faster grinders and try again.")}`);
+      return;
+    }
+  } else if (estimatedSeconds > staleCheckSeconds) {
+    console.log("");
+    ui.warn(`Your grinder (~${formatRate(estHashrate)}) is too slow for current difficulty.`);
+    console.log(`    Expected time per mine: ~${formatTime(estimatedSeconds)} (challenges go stale every ${staleCheckSeconds}s).`);
+    console.log("");
+    console.log(`    Fix options:`);
+    console.log(`    1. Run ${ui.cyan("apow build-grinders")} for 100x faster local mining (~500 MH/s)`);
+    console.log(`    2. Add USDC to wallet for x402 GPU mining (~20 GH/s, ~$0.006/mine)`);
+    console.log(`    3. Set up VAST.ai CUDA for ~20 GH/s (see docs)`);
+    console.log("");
+    const proceed = await ui.confirm("Continue anyway?");
+    if (!proceed) {
+      console.log(`  ${ui.dim("Exiting. Build faster grinders and try again.")}`);
+      return;
+    }
   }
 
   console.log("");
@@ -314,8 +443,12 @@ export async function startMining(tokenId: bigint): Promise<void> {
               grindNonceNative(challengeNumber, target, account.address, grinderInfo, abortController.signal)
                 .catch((err) => {
                   if (abortController.signal.aborted) throw err;
-                  // Native failed but don't abort the race — others may still win
-                  console.log(`  ${ui.dim(`Native grinder error: ${err instanceof Error ? err.message : String(err)}`)}`);
+                  const msg = err instanceof Error ? err.message : String(err);
+                  if (msg.includes("No native grinders")) {
+                    console.log(`  ${ui.dim("No native grinders found.")} ${ui.yellow("Tip:")} Run ${ui.cyan("apow build-grinders")} for 100x speedup`);
+                  } else {
+                    console.log(`  ${ui.dim(`Native grinder error: ${msg}`)}`);
+                  }
                   return new Promise<GrindResult>(() => {}); // hang forever (race will resolve via another grinder)
                 }),
             );
@@ -326,27 +459,36 @@ export async function startMining(tokenId: bigint): Promise<void> {
               grindNonceHttp(challengeNumber, target, account.address, grindUrl, config.privateKey!, abortController.signal)
                 .catch((err) => {
                   if (abortController.signal.aborted) throw err;
-                  // Log x402 errors visibly — payment failures, timeouts, etc.
-                  console.log(`  ${ui.dim(`x402 GPU grinder error: ${err instanceof Error ? err.message : String(err)}`)}`);
+                  const msg = err instanceof Error ? err.message : String(err);
+                  if (msg.includes("402")) {
+                    console.log(`  ${ui.yellow("x402 GPU payment failed.")} Check USDC balance or run: ${ui.cyan("apow wallet fund")}`);
+                  } else if (msg.includes("insufficient USDC")) {
+                    console.log(`  ${ui.yellow("x402 GPU needs USDC.")} Run: ${ui.cyan("apow wallet fund")}`);
+                  } else {
+                    console.log(`  ${ui.dim(`x402 GPU grinder error: ${msg}`)}`);
+                  }
                   return new Promise<GrindResult>(() => {});
                 }),
             );
           }
 
-          // JS fallback always runs (it's the baseline)
-          grinders.push(
-            grindNonceParallel({
-              challengeNumber,
-              target,
-              minerAddress: account.address,
-              threads: config.minerThreads,
-              signal: abortController.signal,
-              onProgress: !useNative && !useHttpGrind ? (attempts, hashrate) => {
-                const khs = (hashrate / 1000).toFixed(0);
-                nonceSpinner.update(`Grinding nonce (JS)... ${khs}k H/s (${attempts.toLocaleString()} attempts)`);
-              } : undefined,
-            }),
-          );
+          // JS grinder only runs when no native or HTTP grinders are active
+          // (avoids wasting CPU cores that CPU-C needs)
+          if (!useNative && !useHttpGrind) {
+            grinders.push(
+              grindNonceParallel({
+                challengeNumber,
+                target,
+                minerAddress: account.address,
+                threads: config.minerThreads,
+                signal: abortController.signal,
+                onProgress: (attempts, hashrate) => {
+                  const khs = (hashrate / 1000).toFixed(0);
+                  nonceSpinner.update(`Grinding nonce (JS)... ${khs}k H/s (${attempts.toLocaleString()} attempts)`);
+                },
+              }),
+            );
+          }
 
           grind = await Promise.race(grinders);
 
