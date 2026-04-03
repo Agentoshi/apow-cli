@@ -23,6 +23,19 @@ function resetPaymentFetch(): void {
   _fetchWithPayment = null;
 }
 
+function extractErrorDetail(body: string): string {
+  if (!body) return "";
+  try {
+    const parsed = JSON.parse(body) as { error?: unknown; message?: unknown };
+    if (typeof parsed.error === "string" && parsed.error.trim()) return parsed.error.trim();
+    if (typeof parsed.message === "string" && parsed.message.trim()) return parsed.message.trim();
+    if (body.trim() === "{}") return "";
+  } catch {
+    // plain text body
+  }
+  return body.trim();
+}
+
 async function getPaymentFetch(privateKey: `0x${string}`): Promise<typeof fetch> {
   if (_fetchWithPayment) return _fetchWithPayment;
 
@@ -76,6 +89,7 @@ export async function grindNonceHttp(
     }
 
     const body = await response.text().catch(() => "");
+    const bodyDetail = extractErrorDetail(body);
     const paymentRequiredB64 = response.headers.get("payment-required");
     let reason = "";
     if (paymentRequiredB64) {
@@ -85,7 +99,7 @@ export async function grindNonceHttp(
       } catch { /* ignore decode errors */ }
     }
 
-    const combinedError = `${reason} ${body}`.trim();
+    const combinedError = `${reason} ${bodyDetail}`.trim();
     if (attempt === 1 && combinedError.includes("No matching payment requirements")) {
       resetPaymentFetch();
       continue;
@@ -97,13 +111,13 @@ export async function grindNonceHttp(
       } else if (reason.includes("simulation_failed")) {
         throw new Error(`x402 GPU payment failed: EVM simulation failed (USDC approval issue?) [${reason}]`);
       } else {
-        throw new Error(`x402 GPU payment failed: ${reason || body.slice(0, 200) || "unknown"}`);
+        throw new Error(`x402 GPU payment failed: ${reason || bodyDetail.slice(0, 200) || "unknown"}`);
       }
     }
     if (response.status === 504) {
       throw new Error("Remote GPU grind timed out (120s)");
     }
-    throw new Error(`GrindProxy HTTP ${response.status}: ${body.slice(0, 200)}`);
+    throw new Error(`GrindProxy HTTP ${response.status}: ${(bodyDetail || body).slice(0, 200)}`);
   }
 
   if (!response || !response.ok) {

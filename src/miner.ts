@@ -461,7 +461,7 @@ export async function startMining(tokenId: bigint): Promise<void> {
                   } else {
                     console.log(`  ${ui.dim(`Native grinder error: ${msg}`)}`);
                   }
-                  return new Promise<GrindResult>(() => {}); // hang forever (race will resolve via another grinder)
+                  throw err;
                 }),
             );
           }
@@ -481,7 +481,7 @@ export async function startMining(tokenId: bigint): Promise<void> {
                   } else {
                     console.log(`  ${ui.dim(`x402 GPU grinder error: ${msg}`)}`);
                   }
-                  return new Promise<GrindResult>(() => {});
+                  throw err;
                 }),
             );
           }
@@ -503,7 +503,18 @@ export async function startMining(tokenId: bigint): Promise<void> {
             );
           }
 
-          grind = await Promise.race(grinders);
+          try {
+            grind = await Promise.any(grinders);
+          } catch (err) {
+            if (err instanceof AggregateError && err.errors.length > 0) {
+              const firstNonAbort = err.errors.find((inner) => {
+                if (!(inner instanceof Error)) return true;
+                return inner.name !== "AbortError";
+              });
+              throw firstNonAbort ?? err.errors[0];
+            }
+            throw err;
+          }
 
           const khs = grind.hashrate > 0 ? (grind.hashrate / 1000).toFixed(0) : "?";
           nonceSpinner.stop(`Nonce found (${grind.elapsed.toFixed(1)}s${grind.hashrate > 0 ? `, ${khs}k H/s` : ""})`);
