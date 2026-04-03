@@ -28,7 +28,7 @@ npx apow-cli
 > **v0.8.0+: Bring your own RPC or use auto-pay.** You need a Base RPC endpoint. Two options:
 >
 > 1. **Bring your own** (free): Get a free RPC URL from [Alchemy](https://www.alchemy.com/), [QuickNode](https://www.quicknode.com/), or any Base RPC provider. Set `RPC_URL` in your `.env`.
-> 2. **QuickNode x402** (paid, zero setup): Set `USE_X402=true` in your `.env`. Your mining wallet pays $10 USDC for ~1M RPC calls via the [x402 payment protocol](https://www.x402.org/). No API key, no account needed.
+> 2. **QuickNode x402** (paid, zero setup): Set `USE_X402=true` in your `.env`. Your mining wallet pays for RPC usage via the [x402 payment protocol](https://www.x402.org/). Start with at least 2.00 USDC on Base and add more for headroom. No API key or account needed.
 >
 > Run `apow setup` to configure interactively.
 
@@ -71,16 +71,16 @@ Each wallet gets one rig, each rig mines independently. More wallets = more chan
 If you prefer to do it yourself:
 
 ```bash
-npx apow-cli start   # guided happy path: setup -> fund -> mint -> mine
+npx apow-cli start   # guided happy path: setup -> funding checks -> mint -> mine
 ```
 
-If you want to control each step manually, the older `setup -> fund -> mint -> mine` flow is still supported below.
+If you want to control each step manually, the older step-by-step flow is still supported below.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `apow start` | Guided happy path: setup -> fund -> mint -> mine |
+| `apow start` | Guided happy path: setup -> funding checks -> mint -> mine |
 | `apow setup` | Agent-first setup wizard: Easy Mode (x402 everywhere) or Advanced Mode |
 | `apow fund` | Fund your wallet: bridge from Solana/Ethereum or send on Base, auto-split ETH+USDC |
 | `apow wallet new` | Generate a new mining wallet, plus optional encrypted JSON keystore backup |

@@ -30,7 +30,7 @@ on Base. Everything else you handle yourself.
 
 **Via npm (recommended):**
 ```bash
-npx apow-cli start     # zero-config happy path: setup -> fund -> mint -> mine
+npx apow-cli start     # zero-config happy path: setup -> funding checks -> mint -> mine
 ```
 
 **Via source:**
@@ -48,7 +48,7 @@ If you're an AI agent, you can skip the wizard and write the `.env` directly.
 ```bash
 # 1. Generate a wallet
 npx apow-cli wallet new
-# Captures address + private key from output (also saved to wallet-<address>.txt)
+# Captures address + private key from output (and can save a plaintext import helper plus encrypted keystore)
 
 # 2. Write .env directly — Easy Mode equivalent
 # Contract addresses are built-in defaults — no need to specify them
