@@ -122,38 +122,57 @@ function resolveLlmApiKey(provider: LlmProvider): string | undefined {
   }
 }
 
-const chainName = resolveChainName();
-const useX402 = process.env.USE_X402 === "true";
-const resolvedProvider = normalizeProvider(process.env.LLM_PROVIDER, useX402);
+function resolveStaleCheckIntervalMs(): number {
+  if (process.env.STALE_CHECK_INTERVAL) {
+    return parseInt(process.env.STALE_CHECK_INTERVAL, 10) * 1000;
+  }
 
-export const config: AppConfig = {
-  privateKey: parsePrivateKey(process.env.PRIVATE_KEY),
-  rpcUrl: process.env.RPC_URL ?? "",
-  useX402,
-  llmProvider: resolvedProvider,
-  llmApiKey: resolveLlmApiKey(resolvedProvider),
-  llmModel: process.env.LLM_MODEL ?? resolveDefaultModel(resolvedProvider),
-  ollamaUrl: process.env.OLLAMA_URL ?? DEFAULT_OLLAMA_URL,
-  chain: chainName === "baseSepolia" ? baseSepolia : base,
-  chainName,
-  miningAgentAddress: parseAddress("MINING_AGENT_ADDRESS", DEFAULT_MINING_AGENT_ADDRESS),
-  agentCoinAddress: parseAddress("AGENT_COIN_ADDRESS", DEFAULT_AGENT_COIN_ADDRESS),
-  minerThreads: parseInt(process.env.MINER_THREADS ?? String(os.cpus().length), 10),
-  grinderMode: (process.env.GRINDER_MODE === "js" ? "js" : "auto") as GrinderMode,
-  gpuGrinderPath: process.env.GPU_GRINDER_PATH,
-  cpuGrinderPath: process.env.CPU_GRINDER_PATH,
-  cudaGrinderPath: process.env.CUDA_GRINDER_PATH,
-  vastIp: process.env.VAST_IP,
-  vastPort: process.env.VAST_PORT,
-  cpuGrinderThreads: parseInt(process.env.CPU_THREADS ?? String(os.cpus().length), 10),
-  remoteGrinderPath: process.env.REMOTE_GRINDER ?? "/root/grinder-cuda",
-  grindUrl: process.env.GRIND_URL,
-  useX402Grind: process.env.USE_X402_GRIND !== undefined
+  return 10_000;
+}
+
+function buildConfig(): AppConfig {
+  const chainName = resolveChainName();
+  const useX402 = process.env.USE_X402 === "true";
+  const resolvedProvider = normalizeProvider(process.env.LLM_PROVIDER, useX402);
+  const useX402Grind = process.env.USE_X402_GRIND !== undefined
     ? process.env.USE_X402_GRIND === "true"
-    : useX402, // defaults to USE_X402 value when not explicitly set
-  allowLocalFallbackWithX402: process.env.ALLOW_LOCAL_FALLBACK_WITH_X402 === "true",
-  staleCheckIntervalMs: parseInt(process.env.STALE_CHECK_INTERVAL ?? "60", 10) * 1000,
-};
+    : useX402;
+  const allowLocalFallbackWithX402 = process.env.ALLOW_LOCAL_FALLBACK_WITH_X402 === "true";
+
+  return {
+    privateKey: parsePrivateKey(process.env.PRIVATE_KEY),
+    rpcUrl: process.env.RPC_URL ?? "",
+    useX402,
+    llmProvider: resolvedProvider,
+    llmApiKey: resolveLlmApiKey(resolvedProvider),
+    llmModel: process.env.LLM_MODEL ?? resolveDefaultModel(resolvedProvider),
+    ollamaUrl: process.env.OLLAMA_URL ?? DEFAULT_OLLAMA_URL,
+    chain: chainName === "baseSepolia" ? baseSepolia : base,
+    chainName,
+    miningAgentAddress: parseAddress("MINING_AGENT_ADDRESS", DEFAULT_MINING_AGENT_ADDRESS),
+    agentCoinAddress: parseAddress("AGENT_COIN_ADDRESS", DEFAULT_AGENT_COIN_ADDRESS),
+    minerThreads: parseInt(process.env.MINER_THREADS ?? String(os.cpus().length), 10),
+    grinderMode: (process.env.GRINDER_MODE === "js" ? "js" : "auto") as GrinderMode,
+    gpuGrinderPath: process.env.GPU_GRINDER_PATH,
+    cpuGrinderPath: process.env.CPU_GRINDER_PATH,
+    cudaGrinderPath: process.env.CUDA_GRINDER_PATH,
+    vastIp: process.env.VAST_IP,
+    vastPort: process.env.VAST_PORT,
+    cpuGrinderThreads: parseInt(process.env.CPU_THREADS ?? String(os.cpus().length), 10),
+    remoteGrinderPath: process.env.REMOTE_GRINDER ?? "/root/grinder-cuda",
+    grindUrl: process.env.GRIND_URL,
+    useX402Grind,
+    allowLocalFallbackWithX402,
+    staleCheckIntervalMs: resolveStaleCheckIntervalMs(),
+  };
+}
+
+export let config: AppConfig = buildConfig();
+
+export function reloadConfig(): AppConfig {
+  config = buildConfig();
+  return config;
+}
 
 export function requirePrivateKey(): Hex {
   if (!config.privateKey) {
@@ -188,4 +207,8 @@ export async function writeEnvFile(values: Record<string, string>): Promise<void
     .map(([key, value]) => `${key}=${value}`)
     .join("\n");
   await writeFile(join(process.cwd(), ".env"), lines + "\n", "utf8");
+  for (const [key, value] of Object.entries(values)) {
+    process.env[key] = value;
+  }
+  reloadConfig();
 }

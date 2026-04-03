@@ -78,7 +78,31 @@ const patterns: Array<{
     }),
   },
   {
-    test: (m) => /\b402\b/.test(m) || m.toLowerCase().includes("x402") || (m.toLowerCase().includes("insufficient") && m.toLowerCase().includes("usdc")),
+    test: (m) => m.includes("x402 GPU payment failed: insufficient USDC balance"),
+    classify: () => ({
+      category: "setup",
+      userMessage: "Insufficient USDC for x402 GPU grinding",
+      recovery: "Send USDC to your wallet on Base, or set USE_X402_GRIND=false to disable remote grinding",
+    }),
+  },
+  {
+    test: (m) => m.includes("x402 GPU payment failed: EVM simulation failed"),
+    classify: () => ({
+      category: "setup",
+      userMessage: "x402 GPU payment simulation failed",
+      recovery: "Check wallet state and USDC balance, then retry",
+    }),
+  },
+  {
+    test: (m) => m.includes("x402 GPU payment failed") || m.includes("No matching payment requirements"),
+    classify: () => ({
+      category: "transient" as ErrorCategory,
+      userMessage: "x402 GPU payment failed",
+      recovery: "Retrying with a fresh payment session...",
+    }),
+  },
+  {
+    test: (m) => /\b402\b/.test(m) || m.includes("QuickNode x402") || (m.toLowerCase().includes("insufficient") && m.toLowerCase().includes("usdc")),
     classify: () => ({
       category: "transient",
       userMessage: "QuickNode x402 credit purchase failed — check USDC balance on Base",
@@ -131,14 +155,6 @@ const patterns: Array<{
       category: "transient" as ErrorCategory,
       userMessage: "Remote GPU grind timed out (120s)",
       recovery: "High difficulty — local grinders may still find a nonce.",
-    }),
-  },
-  {
-    test: (m) => m.includes("x402 GPU grind payment failed") || m.includes("No matching payment requirements"),
-    classify: () => ({
-      category: "setup" as ErrorCategory,
-      userMessage: "Insufficient USDC for x402 GPU grinding",
-      recovery: "Send USDC to your wallet on Base, or set USE_X402_GRIND=false to disable remote grinding",
     }),
   },
   {

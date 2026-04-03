@@ -6,21 +6,33 @@ import { spawn } from "node:child_process";
 import { Command } from "commander";
 
 import type { Abi } from "viem";
-import { formatEther, parseEther } from "viem";
+import { createPublicClient, formatEther, formatUnits, http, parseEther } from "viem";
 
 import miningAgentAbiJson from "./abi/MiningAgent.json";
-import { config, isExpensiveModel, resolveDefaultModel, writeEnvFile, type LlmProvider } from "./config";
-import { detectMiners, formatHashpower, selectBestMiner } from "./detect";
+import { config, isExpensiveModel, reloadConfig, resolveDefaultModel, writeEnvFile, type LlmProvider } from "./config";
+import { MIN_ETH, MIN_USDC } from "./bridge/constants";
+import { getUsdcBalance } from "./bridge/uniswap";
+import { detectMiners, detectMinersWithClient, formatHashpower, selectBestMiner } from "./detect";
 import { txUrl } from "./explorer";
 import { runFundFlow } from "./fund";
 import { runMintFlow } from "./mint";
 import { startMining } from "./miner";
 import { runPreflight } from "./preflight";
 import { displayStats } from "./stats";
+import { warnIfUpdateAvailable } from "./update";
 import * as ui from "./ui";
-import { account, getEthBalance, publicClient, requireWallet } from "./wallet";
+import { account, getEthBalance, publicClient, reinitClients, requireWallet } from "./wallet";
 
 const miningAgentAbi = miningAgentAbiJson as Abi;
+const erc20BalanceAbi = [
+  {
+    type: "function" as const,
+    name: "balanceOf",
+    inputs: [{ name: "account", type: "address" }],
+    outputs: [{ name: "", type: "uint256" }],
+    stateMutability: "view" as const,
+  },
+] as const;
 
 function saveKeyFile(address: string, privateKey: string): string {
   const filename = `wallet-${address}.txt`;
@@ -294,6 +306,8 @@ async function setupWizard(): Promise<void> {
   }
 
   await writeEnvFile(values);
+  reloadConfig();
+  reinitClients();
   ui.ok("Config saved to .env");
 
   // Check .gitignore
@@ -316,8 +330,107 @@ async function setupWizard(): Promise<void> {
   console.log("");
 }
 
+async function runStartFlow(): Promise<void> {
+  if (!config.privateKey || !account) {
+    console.log("");
+    ui.warn("No wallet configured — launching setup.");
+    await setupWizard();
+    reloadConfig();
+    reinitClients();
+  }
+
+  if (!account) {
+    ui.error("Wallet configuration did not complete.");
+    return;
+  }
+
+  const bootstrapClient = config.useX402 && config.chainName === "base"
+    ? createPublicClient({ chain: config.chain, transport: http("https://1rpc.io/base") })
+    : publicClient;
+
+  console.log("");
+  ui.banner(["APoW Start"]);
+  console.log("");
+
+  let miners = [] as Awaited<ReturnType<typeof detectMinersWithClient>>;
+  try {
+    miners = await detectMinersWithClient(bootstrapClient, account.address);
+  } catch {
+    ui.warn("Could not query wallet rigs via bootstrap RPC — continuing with funding guidance.");
+  }
+  if (miners.length > 0) {
+    const best = selectBestMiner(miners);
+    console.log(`  ${ui.green("Wallet ready.")} Found ${miners.length} rig${miners.length === 1 ? "" : "s"} — starting miner #${best.tokenId}.`);
+    console.log("");
+    await runPreflight("mining");
+    await startMining(best.tokenId);
+    return;
+  }
+
+  let ethBalance = 0;
+  let usdcBalance = 0;
+  let balanceChecksAvailable = true;
+  try {
+    const [ethBalanceRaw, usdcBalanceRaw] = await Promise.all([
+      bootstrapClient.getBalance({ address: account.address }),
+      config.useX402
+        ? bootstrapClient.readContract({
+            address: config.chainName === "base" ? "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" : config.agentCoinAddress,
+            abi: erc20BalanceAbi,
+            functionName: "balanceOf",
+            args: [account.address],
+          }) as Promise<bigint>
+        : Promise.resolve(0n),
+    ]);
+    ethBalance = Number(formatEther(ethBalanceRaw));
+    usdcBalance = Number(formatUnits(usdcBalanceRaw, 6));
+  } catch {
+    balanceChecksAvailable = false;
+    ui.warn("Could not query wallet balances via bootstrap RPC — funding flow may still be needed.");
+  }
+
+  const needsEth = !balanceChecksAvailable || ethBalance < MIN_ETH;
+  const needsUsdc = config.useX402 && (!balanceChecksAvailable || usdcBalance < MIN_USDC);
+
+  if (needsEth || needsUsdc) {
+    console.log(`  ${ui.yellow("Funding needed before minting.")}`);
+    ui.table([
+      ["Wallet", `${account.address.slice(0, 6)}...${account.address.slice(-4)}`],
+      ["ETH", balanceChecksAvailable ? `${ethBalance.toFixed(6)} ETH${needsEth ? ` (need ≥${MIN_ETH})` : ""}` : "unknown (RPC check failed)"],
+      ["USDC", config.useX402 ? (balanceChecksAvailable ? `${usdcBalance.toFixed(2)} USDC${needsUsdc ? ` (need ≥${MIN_USDC})` : ""}` : "unknown (RPC check failed)") : "not required"],
+    ]);
+    console.log("");
+
+    const runFunding = await ui.confirm("Run funding flow now?");
+    if (!runFunding) {
+      ui.hint("Fund the wallet, then rerun `apow start`.");
+      return;
+    }
+
+    await runFundFlow({});
+
+    const refreshedEth = Number(formatEther(await getEthBalance()));
+    const refreshedUsdc = config.useX402 ? Number(formatUnits(await getUsdcBalance(account.address), 6)) : usdcBalance;
+    if (refreshedEth < MIN_ETH || (config.useX402 && refreshedUsdc < MIN_USDC)) {
+      ui.warn("Funding is still incomplete.");
+      ui.hint("Bridge or deposit may still be pending. Rerun `apow start` once balances update.");
+      return;
+    }
+  }
+
+  const tokenId = await runMintFlow({ startMiningAfterMint: false });
+  if (!tokenId) {
+    return;
+  }
+
+  console.log("");
+  await runPreflight("mining");
+  await startMining(tokenId);
+}
+
 async function main(): Promise<void> {
   const version = readVersion();
+  void warnIfUpdateAvailable(version);
   const program = new Command();
 
   // SIGINT handler
@@ -342,6 +455,13 @@ async function main(): Promise<void> {
     .description("Agent-first setup wizard — choose Easy Mode (x402 for everything) or Advanced Mode")
     .action(async () => {
       await setupWizard();
+    });
+
+  program
+    .command("start")
+    .description("Agent-first happy path: setup -> fund -> mint -> mine")
+    .action(async () => {
+      await runStartFlow();
     });
 
   program

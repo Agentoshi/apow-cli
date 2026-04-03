@@ -1,4 +1,4 @@
-import type { Abi, Address } from "viem";
+import type { Abi, Address, PublicClient } from "viem";
 
 import miningAgentAbiJson from "./abi/MiningAgent.json";
 import { config } from "./config";
@@ -14,8 +14,8 @@ export interface OwnedMiner {
   hashpower: number;
 }
 
-export async function detectMiners(owner: Address): Promise<OwnedMiner[]> {
-  const balance = (await publicClient.readContract({
+export async function detectMinersWithClient(client: PublicClient, owner: Address): Promise<OwnedMiner[]> {
+  const balance = (await client.readContract({
     address: config.miningAgentAddress,
     abi: miningAgentAbi,
     functionName: "balanceOf",
@@ -29,7 +29,7 @@ export async function detectMiners(owner: Address): Promise<OwnedMiner[]> {
   const miners: OwnedMiner[] = [];
 
   for (let i = 0n; i < balance; i++) {
-    const tokenId = (await publicClient.readContract({
+    const tokenId = (await client.readContract({
       address: config.miningAgentAddress,
       abi: miningAgentAbi,
       functionName: "tokenOfOwnerByIndex",
@@ -37,13 +37,13 @@ export async function detectMiners(owner: Address): Promise<OwnedMiner[]> {
     })) as bigint;
 
     const [rarityRaw, hashpowerRaw] = await Promise.all([
-      publicClient.readContract({
+      client.readContract({
         address: config.miningAgentAddress,
         abi: miningAgentAbi,
         functionName: "rarity",
         args: [tokenId],
       }) as Promise<bigint>,
-      publicClient.readContract({
+      client.readContract({
         address: config.miningAgentAddress,
         abi: miningAgentAbi,
         functionName: "hashpower",
@@ -61,6 +61,10 @@ export async function detectMiners(owner: Address): Promise<OwnedMiner[]> {
   }
 
   return miners;
+}
+
+export async function detectMiners(owner: Address): Promise<OwnedMiner[]> {
+  return detectMinersWithClient(publicClient, owner);
 }
 
 export function selectBestMiner(miners: OwnedMiner[]): OwnedMiner {

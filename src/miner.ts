@@ -1,6 +1,7 @@
 import type { Abi } from "viem";
 import { encodePacked, formatEther, keccak256 } from "viem";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import agentCoinAbiJson from "./abi/AgentCoin.json";
 import miningAgentAbiJson from "./abi/MiningAgent.json";
@@ -36,6 +37,22 @@ function elapsedSeconds(start: [number, number]): number {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function rejectOnAbort(signal: AbortSignal): Promise<never> {
+  if (signal.aborted) {
+    const err = new Error("Aborted");
+    err.name = "AbortError";
+    return Promise.reject(err);
+  }
+
+  return new Promise((_, reject) => {
+    signal.addEventListener("abort", () => {
+      const err = new Error("Aborted");
+      err.name = "AbortError";
+      reject(err);
+    }, { once: true });
+  });
 }
 
 function backoffMs(failures: number): number {
@@ -109,6 +126,15 @@ function formatTime(seconds: number): string {
   if (seconds < 60) return `${seconds.toFixed(0)}s`;
   if (seconds < 3600) return `${(seconds / 60).toFixed(1)} min`;
   return `${(seconds / 3600).toFixed(1)} hr`;
+}
+
+function readCliVersion(): string {
+  try {
+    const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf8"));
+    return pkg.version ?? "0.1.0";
+  } catch {
+    return "0.1.0";
+  }
 }
 
 function autoBuildGrinders(): boolean {
@@ -225,7 +251,8 @@ async function showStartupBanner(tokenId: bigint): Promise<void> {
   const supplyPct = Number(totalMinted * 10000n / mineableSupply) / 100;
 
   console.log("");
-  ui.banner([`AgentCoin Miner v${config.chainName === "baseSepolia" ? "0.1.0-testnet" : "0.1.0"}`]);
+  const version = readCliVersion();
+  ui.banner([`AgentCoin Miner v${config.chainName === "baseSepolia" ? `${version}-testnet` : version}`]);
   ui.table([
     ["Wallet", `${account.address.slice(0, 6)}...${account.address.slice(-4)} (${Number(formatEther(ethBalance)).toFixed(4)} ETH)`],
     ["Miner", `#${tokenId} (${rarityLabels[rarity] ?? `Tier ${rarity}`}, ${formatHashpower(hashpower)})`],
@@ -452,7 +479,10 @@ export async function startMining(tokenId: bigint): Promise<void> {
 
           if (useNative) {
             grinders.push(
-              grindNonceNative(challengeNumber, target, account.address, grinderInfo, abortController.signal)
+              Promise.race([
+                grindNonceNative(challengeNumber, target, account.address, grinderInfo, abortController.signal),
+                rejectOnAbort(abortController.signal),
+              ])
                 .catch((err) => {
                   if (abortController.signal.aborted) throw err;
                   const msg = err instanceof Error ? err.message : String(err);
@@ -468,7 +498,10 @@ export async function startMining(tokenId: bigint): Promise<void> {
 
           if (useHttpGrind) {
             grinders.push(
-              grindNonceHttp(challengeNumber, target, account.address, grindUrl, config.privateKey!, abortController.signal)
+              Promise.race([
+                grindNonceHttp(challengeNumber, target, account.address, grindUrl, config.privateKey!, abortController.signal),
+                rejectOnAbort(abortController.signal),
+              ])
                 .catch((err) => {
                   if (abortController.signal.aborted) throw err;
                   const msg = err instanceof Error ? err.message : String(err);
@@ -489,17 +522,20 @@ export async function startMining(tokenId: bigint): Promise<void> {
           // JS fallback is disabled by default when x402 grinding is active.
           if (useJsFallback) {
             grinders.push(
-              grindNonceParallel({
-                challengeNumber,
-                target,
-                minerAddress: account.address,
-                threads: config.minerThreads,
-                signal: abortController.signal,
-                onProgress: !useHttpGrind ? (attempts, hashrate) => {
-                  const khs = (hashrate / 1000).toFixed(0);
-                  nonceSpinner.update(`Grinding nonce (JS)... ${khs}k H/s (${attempts.toLocaleString()} attempts)`);
-                } : undefined,
-              }),
+              Promise.race([
+                grindNonceParallel({
+                  challengeNumber,
+                  target,
+                  minerAddress: account.address,
+                  threads: config.minerThreads,
+                  signal: abortController.signal,
+                  onProgress: !useHttpGrind ? (attempts, hashrate) => {
+                    const khs = (hashrate / 1000).toFixed(0);
+                    nonceSpinner.update(`Grinding nonce (JS)... ${khs}k H/s (${attempts.toLocaleString()} attempts)`);
+                  } : undefined,
+                }),
+                rejectOnAbort(abortController.signal),
+              ]),
             );
           }
 
@@ -613,7 +649,7 @@ export async function startMining(tokenId: bigint): Promise<void> {
     } catch (error) {
       const classified = classifyError(error);
 
-      if (classified.category === "fatal") {
+      if (classified.category === "fatal" || classified.category === "setup") {
         ui.error(classified.userMessage);
         if (classified.recovery) ui.hint(classified.recovery);
         return;

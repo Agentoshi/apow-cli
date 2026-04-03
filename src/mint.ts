@@ -13,6 +13,10 @@ import { getEthBalance, publicClient, requireWallet } from "./wallet";
 const miningAgentAbi = miningAgentAbiJson as Abi;
 const ZERO_SEED = `0x${"0".repeat(64)}` as Hex;
 
+export interface MintFlowOptions {
+  startMiningAfterMint?: boolean;
+}
+
 function deriveChallengeFromSeed(seed: Hex): SmhlChallenge {
   const bytes = hexToBytes(seed);
   const firstNChars = 5 + (bytes[0] % 6);
@@ -41,7 +45,7 @@ function deriveChallengeFromSeed(seed: Hex): SmhlChallenge {
   ]);
 }
 
-export async function runMintFlow(): Promise<void> {
+export async function runMintFlow(options: MintFlowOptions = {}): Promise<bigint | null> {
   const { account, walletClient } = requireWallet();
   console.log("");
 
@@ -82,7 +86,7 @@ export async function runMintFlow(): Promise<void> {
     ui.hint("One rig per wallet. Only one mine can succeed per block,");
     ui.hint("so extra rigs in the same wallet waste ETH.");
     ui.hint("To scale: apow wallet new → fund → apow mint");
-    return;
+    return tokenId;
   }
 
   // Fetch mint price and balance FIRST
@@ -108,14 +112,14 @@ export async function runMintFlow(): Promise<void> {
   if (ethBalance < mintPrice) {
     ui.error("Insufficient ETH for mint.");
     ui.hint(`Send at least ${formatEther(mintPrice)} ETH to ${account.address} on Base`);
-    return;
+    return null;
   }
 
   // Confirm before spending ETH
   const proceed = await ui.confirm("Proceed with mint?");
   if (!proceed) {
     console.log("  Mint cancelled.");
-    return;
+    return null;
   }
   console.log("");
 
@@ -213,8 +217,14 @@ export async function runMintFlow(): Promise<void> {
   console.log("");
 
   // Offer to start mining
-  const startMine = await ui.confirm("Start mining?");
-  if (startMine) {
+  if (options.startMiningAfterMint === true) {
     await startMining(tokenId);
+  } else if (options.startMiningAfterMint !== false) {
+    const startMine = await ui.confirm("Start mining?");
+    if (startMine) {
+      await startMining(tokenId);
+    }
   }
+
+  return tokenId;
 }

@@ -14,14 +14,14 @@ function getTransport(): Transport {
   return http(config.rpcUrl);
 }
 
-const transport = getTransport();
+let transport = getTransport();
 
 export let publicClient = createPublicClient({
   chain: config.chain,
   transport,
 });
 
-export const account = config.privateKey
+export let account = config.privateKey
   ? privateKeyToAccount(config.privateKey)
   : null;
 
@@ -36,16 +36,19 @@ export let walletClient = account
 
 /** Reinitialize clients after config changes (e.g., x402 fallback). */
 export function reinitClients(): void {
-  const t = getTransport();
-  publicClient = createPublicClient({ chain: config.chain, transport: t });
-  if (account) {
-    walletClient = createWalletClient({
-      account,
-      chain: config.chain,
-      transport: t,
-      dataSuffix: DATA_SUFFIX,
-    });
-  }
+  transport = getTransport();
+  account = config.privateKey
+    ? privateKeyToAccount(config.privateKey)
+    : null;
+  publicClient = createPublicClient({ chain: config.chain, transport });
+  walletClient = account
+    ? createWalletClient({
+        account,
+        chain: config.chain,
+        transport,
+        dataSuffix: DATA_SUFFIX,
+      })
+    : null;
 }
 
 export function requireWallet() {
