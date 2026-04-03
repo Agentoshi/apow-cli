@@ -39,6 +39,25 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms / 1000}s`));
+    }, ms);
+
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 function rejectOnAbort(signal: AbortSignal): Promise<never> {
   if (signal.aborted) {
     const err = new Error("Aborted");
@@ -126,6 +145,18 @@ function formatTime(seconds: number): string {
   if (seconds < 60) return `${seconds.toFixed(0)}s`;
   if (seconds < 3600) return `${(seconds / 60).toFixed(1)} min`;
   return `${(seconds / 3600).toFixed(1)} hr`;
+}
+
+async function readMiningChallenge(timeoutMs = 8_000): Promise<readonly [`0x${string}`, bigint, unknown]> {
+  return withTimeout(
+    publicClient.readContract({
+      address: config.agentCoinAddress,
+      abi: agentCoinAbi,
+      functionName: "getMiningChallenge",
+    }) as Promise<readonly [`0x${string}`, bigint, unknown]>,
+    timeoutMs,
+    "Mining challenge refresh",
+  );
 }
 
 function readCliVersion(): string {
@@ -308,11 +339,7 @@ export async function startMining(tokenId: bigint): Promise<void> {
   console.log(`  Grinder: ${ui.bold(modeLabel)}`);
 
   // Difficulty-aware preflight gate
-  const preflight = (await publicClient.readContract({
-    address: config.agentCoinAddress,
-    abi: agentCoinAbi,
-    functionName: "getMiningChallenge",
-  })) as readonly [`0x${string}`, bigint, unknown];
+  const preflight = await readMiningChallenge();
 
   const preflightTarget = preflight[1];
   const expectedHashes = preflightTarget > 0n ? (2n ** 256n) / preflightTarget : 0n;
@@ -421,11 +448,7 @@ export async function startMining(tokenId: bigint): Promise<void> {
       mineCount++;
       console.log(`  ${ui.bold(`[Mine #${mineCount}]`)}`);
 
-      const miningChallenge = (await publicClient.readContract({
-        address: config.agentCoinAddress,
-        abi: agentCoinAbi,
-        functionName: "getMiningChallenge",
-      })) as readonly [`0x${string}`, bigint, unknown];
+      const miningChallenge = await readMiningChallenge();
 
       let [challengeNumber, target] = [miningChallenge[0], miningChallenge[1]];
       const smhl = normalizeSmhlChallenge(miningChallenge[2]);
@@ -456,22 +479,44 @@ export async function startMining(tokenId: bigint): Promise<void> {
         const nonceSpinner = ui.spinner(`Grinding nonce (${modeLabel})...`);
 
         // Background staleness checker
-        const staleTimer = setInterval(async () => {
-          try {
-            const fresh = (await publicClient.readContract({
-              address: config.agentCoinAddress,
-              abi: agentCoinAbi,
-              functionName: "getMiningChallenge",
-            })) as readonly [`0x${string}`, bigint, unknown];
-            if (fresh[0] !== challengeNumber) {
-              staleRestarts++;
-              nonceSpinner.stop(`Challenge changed — restarting grind (stale #${staleRestarts})`);
-              abortController.abort();
-            }
-          } catch {
-            // RPC hiccup — don't abort, just skip this check
+        let staleTimer: NodeJS.Timeout | null = null;
+        let staleCheckStopped = false;
+        let staleCheckInFlight = false;
+        const stopStaleChecks = () => {
+          staleCheckStopped = true;
+          if (staleTimer) {
+            clearTimeout(staleTimer);
+            staleTimer = null;
           }
-        }, staleCheckMs);
+        };
+        const scheduleStaleCheck = () => {
+          if (staleCheckStopped || abortController.signal.aborted) return;
+          staleTimer = setTimeout(async () => {
+            if (staleCheckStopped || abortController.signal.aborted || staleCheckInFlight) {
+              scheduleStaleCheck();
+              return;
+            }
+
+            staleCheckInFlight = true;
+            try {
+              const fresh = await readMiningChallenge(Math.min(staleCheckMs, 5_000));
+              if (fresh[0] !== challengeNumber && !abortController.signal.aborted) {
+                staleRestarts++;
+                nonceSpinner.stop(`Challenge changed — restarting grind (stale #${staleRestarts})`);
+                abortController.abort();
+                stopStaleChecks();
+                return;
+              }
+            } catch {
+              // RPC hiccup — don't abort, just skip this check
+            } finally {
+              staleCheckInFlight = false;
+            }
+
+            scheduleStaleCheck();
+          }, staleCheckMs);
+        };
+        scheduleStaleCheck();
 
         try {
           // Race all available grinders — first valid nonce wins
@@ -557,11 +602,7 @@ export async function startMining(tokenId: bigint): Promise<void> {
 
           // Final stale check: a challenge can change between the periodic
           // poll and transaction submission, which would make the SMHL stale.
-          const latestChallenge = (await publicClient.readContract({
-            address: config.agentCoinAddress,
-            abi: agentCoinAbi,
-            functionName: "getMiningChallenge",
-          })) as readonly [`0x${string}`, bigint, unknown];
+          const latestChallenge = await readMiningChallenge();
           if (latestChallenge[0] !== challengeNumber) {
             staleRestarts++;
             [challengeNumber, target] = [latestChallenge[0], latestChallenge[1]];
@@ -572,14 +613,10 @@ export async function startMining(tokenId: bigint): Promise<void> {
             continue;
           }
         } catch (err) {
-          clearInterval(staleTimer);
+          stopStaleChecks();
           if (abortController.signal.aborted) {
             // Challenge went stale — re-fetch and retry
-            const freshChallenge = (await publicClient.readContract({
-              address: config.agentCoinAddress,
-              abi: agentCoinAbi,
-              functionName: "getMiningChallenge",
-            })) as readonly [`0x${string}`, bigint, unknown];
+            const freshChallenge = await readMiningChallenge();
             [challengeNumber, target] = [freshChallenge[0], freshChallenge[1]];
             const freshSmhl = normalizeSmhlChallenge(freshChallenge[2]);
             smhlSolution = solveSmhlAlgorithmic(freshSmhl);
@@ -594,7 +631,7 @@ export async function startMining(tokenId: bigint): Promise<void> {
           nonceSpinner.fail("Grinding nonce failed");
           throw err; // non-abort error — propagate
         } finally {
-          clearInterval(staleTimer);
+          stopStaleChecks();
         }
       }
 
