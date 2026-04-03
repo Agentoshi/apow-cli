@@ -19,6 +19,10 @@ const DEFAULT_GRIND_URL = "https://grind.apow.io/grind";
 // Lazy singleton — created on first grind, reused across calls
 let _fetchWithPayment: typeof fetch | null = null;
 
+function resetPaymentFetch(): void {
+  _fetchWithPayment = null;
+}
+
 async function getPaymentFetch(privateKey: `0x${string}`): Promise<typeof fetch> {
   if (_fetchWithPayment) return _fetchWithPayment;
 
@@ -50,10 +54,8 @@ export async function grindNonceHttp(
   privateKey: `0x${string}`,
   signal?: AbortSignal,
 ): Promise<GrindResult> {
-  const paidFetch = await getPaymentFetch(privateKey);
   const start = process.hrtime();
-
-  const response = await paidFetch(grindUrl, {
+  const requestInit = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -62,17 +64,50 @@ export async function grindNonceHttp(
       address: minerAddress,
     }),
     signal,
-  });
+  } satisfies RequestInit;
 
-  if (!response.ok) {
+  let response: Response | null = null;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const paidFetch = await getPaymentFetch(privateKey);
+    response = await paidFetch(grindUrl, requestInit);
+
+    if (response.ok) {
+      break;
+    }
+
     const body = await response.text().catch(() => "");
+    const paymentRequiredB64 = response.headers.get("payment-required");
+    let reason = "";
+    if (paymentRequiredB64) {
+      try {
+        const decoded = JSON.parse(Buffer.from(paymentRequiredB64, "base64").toString());
+        reason = decoded.error || "";
+      } catch { /* ignore decode errors */ }
+    }
+
+    const combinedError = `${reason} ${body}`.trim();
+    if (attempt === 1 && combinedError.includes("No matching payment requirements")) {
+      resetPaymentFetch();
+      continue;
+    }
+
     if (response.status === 402) {
-      throw new Error(`x402 GPU payment failed (402): ${body.slice(0, 300) || "no response body"}`);
+      if (reason.includes("insufficient_balance")) {
+        throw new Error("x402 GPU payment failed: insufficient USDC balance");
+      } else if (reason.includes("simulation_failed")) {
+        throw new Error(`x402 GPU payment failed: EVM simulation failed (USDC approval issue?) [${reason}]`);
+      } else {
+        throw new Error(`x402 GPU payment failed: ${reason || body.slice(0, 200) || "unknown"}`);
+      }
     }
     if (response.status === 504) {
-      throw new Error("Remote GPU grind timed out (90s)");
+      throw new Error("Remote GPU grind timed out (120s)");
     }
     throw new Error(`GrindProxy HTTP ${response.status}: ${body.slice(0, 200)}`);
+  }
+
+  if (!response || !response.ok) {
+    throw new Error("x402 GPU payment failed: no successful response");
   }
 
   const data = (await response.json()) as { nonce?: string; elapsed?: number };

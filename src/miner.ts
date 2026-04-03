@@ -240,22 +240,31 @@ export async function startMining(tokenId: bigint): Promise<void> {
   const { account, walletClient } = requireWallet();
   let consecutiveFailures = 0;
   let mineCount = 0;
-  let runningTotal = 0n;
+  let runningTotal = (await publicClient.readContract({
+    address: config.agentCoinAddress,
+    abi: agentCoinAbi,
+    functionName: "tokenEarnings",
+    args: [tokenId],
+  })) as bigint;
 
-  // Detect native grinders — auto-build if none found
-  let grinderInfo = detectGrinders();
-  let useNative = config.grinderMode !== "js" && !!(grinderInfo.gpu || grinderInfo.cuda || grinderInfo.cpu || grinderInfo.remoteGpu);
   const useHttpGrind = isHttpGrinderConfigured();
+  const x402OnlyMode = useHttpGrind && !config.allowLocalFallbackWithX402;
+  // Detect native grinders only when they can actually participate.
+  let grinderInfo: GrinderInfo = x402OnlyMode
+    ? { gpu: null, cuda: null, cpu: null, remoteGpu: false, httpGrind: true }
+    : detectGrinders();
+  let useNative = !x402OnlyMode && config.grinderMode !== "js" && !!(grinderInfo.gpu || grinderInfo.cuda || grinderInfo.cpu || grinderInfo.remoteGpu);
   const grindUrl = getGrindUrl();
 
   // Auto-build native grinders on first mine if none detected
-  if (!useNative && !useHttpGrind && config.grinderMode !== "js") {
+  if (!x402OnlyMode && !useNative && !useHttpGrind && config.grinderMode !== "js") {
     const built = autoBuildGrinders();
     if (built) {
       grinderInfo = detectGrinders();
       useNative = !!(grinderInfo.gpu || grinderInfo.cuda || grinderInfo.cpu || grinderInfo.remoteGpu);
     }
   }
+  const useJsFallback = !useNative && (!useHttpGrind || config.allowLocalFallbackWithX402);
 
   // Build grinder label
   const labelParts: string[] = [];
@@ -264,6 +273,7 @@ export async function startMining(tokenId: bigint): Promise<void> {
     const host = new URL(grindUrl).hostname;
     labelParts.push(`x402 GPU (${host})`);
   }
+  if (useJsFallback) labelParts.push(`JS (${config.minerThreads} threads)`);
   if (labelParts.length === 0) labelParts.push(`JS (${config.minerThreads} threads)`);
   let modeLabel = labelParts.join(" + ");
 
@@ -404,7 +414,9 @@ export async function startMining(tokenId: bigint): Promise<void> {
       console.log(`  ${ui.dim(`SMHL solved (${(smhlElapsed * 1000).toFixed(1)}ms)`)}`);
 
 
-      // Grind nonce — native GPU/CPU if available, JS fallback
+      // Grind nonce — x402 GPU is preferred for agent-first easy mode.
+      // JS fallback only runs when explicitly allowed, to avoid burning
+      // local CPU while a remote GPU grind is already in flight.
       // Abort and re-fetch challenge periodically to avoid grinding a dead
       // nonce after another miner wins the block. Configurable via
       // STALE_CHECK_INTERVAL env var (seconds, default 60).
@@ -460,10 +472,12 @@ export async function startMining(tokenId: bigint): Promise<void> {
                 .catch((err) => {
                   if (abortController.signal.aborted) throw err;
                   const msg = err instanceof Error ? err.message : String(err);
-                  if (msg.includes("402")) {
-                    console.log(`  ${ui.yellow("x402 GPU payment failed.")} Check USDC balance or run: ${ui.cyan("apow wallet fund")}`);
-                  } else if (msg.includes("insufficient USDC")) {
-                    console.log(`  ${ui.yellow("x402 GPU needs USDC.")} Run: ${ui.cyan("apow wallet fund")}`);
+                  if (msg.includes("insufficient USDC")) {
+                    console.log(`  ${ui.yellow("x402 GPU: insufficient USDC.")} Run: ${ui.cyan("apow wallet fund")}`);
+                  } else if (msg.includes("simulation_failed")) {
+                    console.log(`  ${ui.yellow("x402 GPU: EVM simulation failed.")} ${ui.dim("USDC approval or balance issue")}`);
+                  } else if (msg.includes("402")) {
+                    console.log(`  ${ui.yellow("x402 GPU payment failed.")} ${ui.dim(msg.slice(0, 120))}`);
                   } else {
                     console.log(`  ${ui.dim(`x402 GPU grinder error: ${msg}`)}`);
                   }
@@ -472,9 +486,8 @@ export async function startMining(tokenId: bigint): Promise<void> {
             );
           }
 
-          // JS grinder runs unless local native grinders are active.
-          // Local CPU-C needs those cores, but x402 is remote — no conflict.
-          if (!useNative) {
+          // JS fallback is disabled by default when x402 grinding is active.
+          if (useJsFallback) {
             grinders.push(
               grindNonceParallel({
                 challengeNumber,
@@ -492,9 +505,25 @@ export async function startMining(tokenId: bigint): Promise<void> {
 
           grind = await Promise.race(grinders);
 
-          clearInterval(staleTimer);
           const khs = grind.hashrate > 0 ? (grind.hashrate / 1000).toFixed(0) : "?";
           nonceSpinner.stop(`Nonce found (${grind.elapsed.toFixed(1)}s${grind.hashrate > 0 ? `, ${khs}k H/s` : ""})`);
+
+          // Final stale check: a challenge can change between the periodic
+          // poll and transaction submission, which would make the SMHL stale.
+          const latestChallenge = (await publicClient.readContract({
+            address: config.agentCoinAddress,
+            abi: agentCoinAbi,
+            functionName: "getMiningChallenge",
+          })) as readonly [`0x${string}`, bigint, unknown];
+          if (latestChallenge[0] !== challengeNumber) {
+            staleRestarts++;
+            [challengeNumber, target] = [latestChallenge[0], latestChallenge[1]];
+            const freshSmhl = normalizeSmhlChallenge(latestChallenge[2]);
+            smhlSolution = solveSmhlAlgorithmic(freshSmhl);
+            console.log(`  ${ui.dim("Challenge changed before submit — re-grinding fresh nonce...")}`);
+            grind = null;
+            continue;
+          }
         } catch (err) {
           clearInterval(staleTimer);
           if (abortController.signal.aborted) {
@@ -515,25 +544,35 @@ export async function startMining(tokenId: bigint): Promise<void> {
             grind = null; // loop again
             continue;
           }
+          nonceSpinner.fail("Grinding nonce failed");
           throw err; // non-abort error — propagate
+        } finally {
+          clearInterval(staleTimer);
         }
       }
 
       // Submit transaction with spinner
       const txSpinner = ui.spinner("Submitting transaction...");
-      const txHash = await walletClient.writeContract({
-        address: config.agentCoinAddress,
-        abi: agentCoinAbi,
-        account,
-        functionName: "mine",
-        args: [grind.nonce, smhlSolution, tokenId],
-      });
-      txSpinner.update("Waiting for confirmation...");
-      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
-      if (receipt.status === "reverted") {
-        throw new Error("Mine transaction reverted on-chain");
+      let txHash: `0x${string}` | undefined;
+      let receipt: { status: string; blockNumber: bigint } | undefined;
+      try {
+        txHash = await walletClient.writeContract({
+          address: config.agentCoinAddress,
+          abi: agentCoinAbi,
+          account,
+          functionName: "mine",
+          args: [grind.nonce, smhlSolution, tokenId],
+        });
+        txSpinner.update("Waiting for confirmation...");
+        receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+        if (receipt.status === "reverted") {
+          throw new Error("Mine transaction reverted on-chain");
+        }
+        txSpinner.stop("Submitting transaction... confirmed");
+      } catch (err) {
+        txSpinner.fail("Submitting transaction failed");
+        throw err;
       }
-      txSpinner.stop("Submitting transaction... confirmed");
 
       // Fetch post-mine earnings with retry (public RPC may lag)
       let earnings = runningTotal;
@@ -552,17 +591,12 @@ export async function startMining(tokenId: bigint): Promise<void> {
       runningTotal = earnings;
 
       console.log(
-        `  ${ui.green("+")} ${formatEther(delta)} AGENT | Total: ${formatEther(earnings)} AGENT | Tx: ${ui.dim(txUrl(txHash))}`,
+        `  ${ui.green("+")} ${formatEther(delta)} AGENT | Total: ${formatEther(earnings)} AGENT | Tx: ${ui.dim(txUrl(txHash!))}`,
       );
       console.log("");
 
       // Wait for block advancement before next iteration
-      const lastMineBlock = (await publicClient.readContract({
-        address: config.agentCoinAddress,
-        abi: agentCoinAbi,
-        functionName: "lastMineBlockNumber",
-      })) as bigint;
-      await waitForNextBlock(lastMineBlock);
+      await waitForNextBlock(receipt!.blockNumber);
 
       consecutiveFailures = 0;
     } catch (error) {

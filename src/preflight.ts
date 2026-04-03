@@ -51,7 +51,7 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
     results.push({
       label: "No RPC configured",
       passed: false,
-      fix: "Set USE_X402=true in .env (auto-pay with USDC), or set RPC_URL to a Base endpoint, or run `apow setup`",
+      fix: "Set USE_X402=true in .env, or run `apow setup` and choose Easy Mode, or set RPC_URL to a Base endpoint",
     });
   }
 
@@ -76,7 +76,7 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
         results.push({
           label: "No USDC balance — QuickNode x402 requires USDC on Base",
           passed: false,
-          fix: `Send USDC to ${account.address} on Base (~$10 covers ${config.llmProvider === "clawrouter" ? "both RPC and LLM calls" : "~1M RPC calls"}). Run \`apow fund\` to bridge from Solana.`,
+          fix: `Send USDC to ${account.address} on Base (~$10 covers ${config.llmProvider === "clawrouter" ? "RPC, LLM, and remote GPU grinding" : "~1M RPC calls"}). Run \`apow fund\` to bridge from Solana or Ethereum.`,
         });
       } else {
         x402Funded = true;
@@ -128,11 +128,11 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
         passed: true,
       });
     } else {
-      results.push({
-        label: "Private key not configured",
-        passed: false,
-        fix: "Set PRIVATE_KEY in .env (0x-prefixed 32-byte hex)",
-      });
+        results.push({
+          label: "Private key not configured",
+          passed: false,
+          fix: "Run `apow setup` and choose Easy Mode, or set PRIVATE_KEY in .env (0x-prefixed 32-byte hex)",
+        });
     }
 
     // Check 4: Wallet has ETH
@@ -218,6 +218,7 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
   if (level === "mining" && isHttpGrinderConfigured()) {
     const grindUrl = getGrindUrl();
     const healthUrl = grindUrl.replace(/\/grind$/, "/health");
+    const grinderIsRequired = !config.allowLocalFallbackWithX402;
     try {
       const resp = await fetch(healthUrl, { signal: AbortSignal.timeout(5000) });
       if (resp.ok) {
@@ -225,14 +226,24 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
         results.push({ label: `GrindProxy: ${host} (dynamic pricing)`, passed: true });
       } else {
         results.push({
-          label: "GrindProxy unreachable (will use local grinders only)",
-          passed: true, // warn but don't fail — local grinders still work
+          label: grinderIsRequired
+            ? "GrindProxy unreachable (required in Easy Mode)"
+            : "GrindProxy unreachable (will use local grinders only)",
+          passed: !grinderIsRequired,
+          fix: grinderIsRequired
+            ? "Check internet connection, grind.apow.io status, or switch to Advanced Mode with local/custom grinders"
+            : undefined,
         });
       }
     } catch {
       results.push({
-        label: "GrindProxy unreachable (will use local grinders only)",
-        passed: true,
+        label: grinderIsRequired
+          ? "GrindProxy unreachable (required in Easy Mode)"
+          : "GrindProxy unreachable (will use local grinders only)",
+        passed: !grinderIsRequired,
+        fix: grinderIsRequired
+          ? "Check internet connection, grind.apow.io status, or switch to Advanced Mode with local/custom grinders"
+          : undefined,
       });
     }
   }

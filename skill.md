@@ -1,6 +1,6 @@
 ---
 name: apow-mine
-description: Set up and start mining AGENT tokens on Base L2 using apow-cli. Handles wallet creation, RPC setup, LLM config, minting a rig, and starting the mining loop. Zero credentials needed — only ETH + USDC on Base.
+description: Set up and start mining AGENT tokens on Base L2 using apow-cli. Easy Mode uses x402 for RPC, LLM, and GPU grinding with no config beyond wallet funding.
 allowed-tools: Bash(npx:*), Bash(node:*), Bash(curl:*)
 argument-hint: [setup|mint|mine|stats]
 metadata:
@@ -18,11 +18,11 @@ metadata:
 
 > A self-contained guide for any AI agent to go from zero knowledge to actively mining AGENT tokens on Base.
 
-**For AI agents:** You are the operator. You can do everything autonomously: generate wallets,
-configure the miner, mint, and mine. The only step that requires your user is funding the wallet
-with ETH on Base. Everything else you handle yourself.
+**For AI agents:** You are the operator. You can generate wallets, configure the miner, mint,
+and mine autonomously. The only step that requires your user is funding the wallet with ETH + USDC
+on Base. Everything else you handle yourself.
 
-> **RPC:** You need a Base RPC endpoint. Either set `RPC_URL` in `.env` (free from Alchemy, QuickNode, etc.) or set `USE_X402=true` to auto-pay via [QuickNode x402](https://x402.quicknode.com/) ($10 USDC for ~1M calls, no API key needed). Run `apow setup` to configure interactively.
+> **Easy Mode:** `apow setup` now starts with `Easy Mode` vs `Advanced Mode`. Easy Mode is the default and uses x402 for RPC, LLM, and GPU grinding with no API keys.
 
 ---
 
@@ -30,7 +30,7 @@ with ETH on Base. Everything else you handle yourself.
 
 **Via npm (recommended):**
 ```bash
-npx apow-cli setup     # interactive wizard: wallet, RPC, LLM config
+npx apow-cli setup     # choose Easy Mode for zero-config x402 setup
 npx apow-cli fund      # fund wallet: bridge from Solana or show deposit address
 npx apow-cli mint      # mint a mining rig NFT
 npx apow-cli mine      # start mining (auto-detects your best rig)
@@ -47,20 +47,23 @@ npx tsx src/index.ts mine
 
 ### Autonomous Agent Flow — Zero Credentials (non-interactive)
 
-If you're an AI agent, skip the interactive wizard and write the `.env` directly.
-**No API keys needed.** ClawRouter pays for LLM inference with USDC from your mining wallet via x402. Same private key, same USDC balance, zero credentials.
+If you're an AI agent, you can skip the wizard and write the `.env` directly.
+**No API keys needed.** The same wallet pays for x402 RPC, x402 LLM, and x402 GPU grinding.
 
 ```bash
 # 1. Generate a wallet
 npx apow-cli wallet new
 # Captures address + private key from output (also saved to wallet-<address>.txt)
 
-# 2. Write .env directly — just 2 lines, ZERO API keys needed
-# USE_X402=true auto-activates clawrouter LLM + QuickNode RPC (both pay with USDC)
+# 2. Write .env directly — Easy Mode equivalent
 # Contract addresses are built-in defaults — no need to specify them
 cat > .env << 'EOF'
 PRIVATE_KEY=0x<from step 1>
 USE_X402=true
+USE_X402_GRIND=true
+LLM_PROVIDER=clawrouter
+LLM_MODEL=blockrun/eco
+ALLOW_LOCAL_FALLBACK_WITH_X402=false
 EOF
 
 # 3. Fund the wallet with ETH (gas) + USDC (x402 RPC + LLM payments)
@@ -564,12 +567,13 @@ Supported grinders (all race in parallel -- first nonce wins, falls back to JS a
 No GPU? Add `USE_X402_GRIND=true` to your `.env` for remote RTX 4090 nonce grinding at ~$0.006/grind (dynamic pricing) via the [x402 payment protocol](https://www.x402.org/). Zero setup, zero API keys — payment is automatic from your mining wallet's USDC balance.
 
 ```bash
-# In your .env (enabled automatically when USE_X402=true)
+# In your .env (enabled automatically in Easy Mode)
 USE_X402_GRIND=true
+# ALLOW_LOCAL_FALLBACK_WITH_X402=true   # Advanced Mode hybrid option
 # GRIND_URL=https://grind.apow.io/grind   # default, override for self-hosted
 ```
 
-The HTTP grinder races alongside all local grinders (Metal, CUDA, CPU-C, JS). First valid nonce wins; losers are cancelled. For GPU-less miners, this is a 10-100x speed improvement over JS fallback.
+In Easy Mode, the HTTP grinder is the only nonce source, so agents do not silently burn local CPU while remote x402 GPU mining is active. Advanced Mode can opt into a hybrid local fallback. For GPU-less miners, this is still a 10-100x speed improvement over JS fallback.
 
 **Front-running is cryptographically impossible:** nonces are bound to `keccak256(challenge, msg.sender, nonce)` — a nonce ground for address A is useless for address B.
 

@@ -63,7 +63,7 @@ async function resolveTokenId(tokenIdArg?: string): Promise<bigint> {
 
   if (!account) {
     ui.error("No token ID provided and no wallet configured.");
-    ui.hint("Usage: apow mine <tokenId> or configure PRIVATE_KEY in .env");
+    ui.hint("Usage: apow mine <tokenId>, or run `apow setup` and choose Easy Mode");
     process.exit(1);
   }
 
@@ -90,32 +90,38 @@ async function resolveTokenId(tokenIdArg?: string): Promise<bigint> {
 
 async function setupWizard(): Promise<void> {
   console.log("");
-  ui.banner(["AgentCoin Miner Setup"]);
+  ui.banner(["APoW Agent Setup"]);
   console.log("");
 
   // Mode selection
-  console.log(`  ${ui.bold("How do you want to configure?")}`);
+  console.log(`  ${ui.bold("Choose an operating mode")}`);
   console.log("");
-  console.log(`  ${ui.cyan("1.")} Quick Start ${ui.dim("(recommended)")}`);
-  console.log(`     ${ui.dim("Zero credentials. Pays for RPC + LLM with USDC from your wallet.")}`);
-  console.log(`  ${ui.cyan("2.")} Custom`);
-  console.log(`     ${ui.dim("Bring your own RPC endpoint and/or LLM API key.")}`);
+  console.log(`  ${ui.cyan("1.")} Easy Mode ${ui.dim("(recommended)")}`);
+  console.log(`     ${ui.dim("No config. Wallet + x402 RPC + x402 LLM + x402 GPU grind.")}`);
+  console.log(`  ${ui.cyan("2.")} Advanced Mode`);
+  console.log(`     ${ui.dim("Choose which parts your agent manages and which credentials you supply.")}`);
   console.log("");
   const modeInput = await ui.prompt("Choice", "1");
-  const quickStart = modeInput !== "2";
+  const easyMode = modeInput !== "2";
   console.log("");
 
-  const totalSteps = quickStart ? 2 : 3;
+  const totalSteps = easyMode ? 2 : 4;
   const values: Record<string, string> = {};
 
   // Step 1: Wallet
   console.log(`  ${ui.bold(`Step 1/${totalSteps}: Wallet`)}`);
-  const hasWallet = await ui.confirm("Do you have a Base wallet?");
+  console.log(`  ${ui.dim("Your agent can manage a wallet for you, or you can supply your own.")}`);
+  console.log("");
+  console.log(`  ${ui.cyan("1.")} Agent-managed wallet ${ui.dim("(generate one now)")}`);
+  console.log(`  ${ui.cyan("2.")} Existing wallet ${ui.dim("(paste private key)")}`);
+  console.log("");
+  const walletMode = await ui.prompt("Wallet choice", "1");
+  const useExistingWallet = walletMode === "2";
 
   let privateKey: string;
   let addr: string;
 
-  if (hasWallet) {
+  if (useExistingWallet) {
     const inputKey = await ui.promptSecret("Private key (0x-prefixed)");
     if (!inputKey) {
       ui.error("Private key is required.");
@@ -161,25 +167,31 @@ async function setupWizard(): Promise<void> {
   ui.ok(`Wallet: ${addr.slice(0, 6)}...${addr.slice(-4)}`);
   console.log("");
 
-  if (quickStart) {
-    // Quick Start: auto-configure x402 + clawrouter
+  if (easyMode) {
+    // Easy Mode: fully autonomous x402 stack
     console.log(`  ${ui.bold(`Step 2/${totalSteps}: Configuration`)}`);
     values.USE_X402 = "true";
+    values.USE_X402_GRIND = "true";
     values.LLM_PROVIDER = "clawrouter";
     values.LLM_MODEL = "blockrun/eco";
-    ui.ok("RPC: QuickNode x402 (auto-pay with USDC, no API key)");
-    ui.ok("LLM: ClawRouter x402 (auto-pay with USDC, no API key)");
-    console.log(`  ${ui.dim("Both services charge USDC from your mining wallet. ~$10 covers ~1M calls.")}`);
+    values.ALLOW_LOCAL_FALLBACK_WITH_X402 = "false";
+    ui.ok("RPC: QuickNode x402 (wallet-paid, no API key)");
+    ui.ok("LLM: ClawRouter x402 (wallet-paid, no API key)");
+    ui.ok("Grinder: x402 GPU (remote, wallet-paid, no local CPU fallback)");
+    console.log(`  ${ui.dim("Easy mode is agent-first: no RPC key, no LLM key, no GPU rental setup.")}`);
+    console.log(`  ${ui.dim("Fund the wallet with ETH + USDC on Base, then run: apow mint && apow mine")}`);
   } else {
-    // Custom: existing 3-step flow
+    // Advanced: user picks which services remain autonomous
     // Step 2: RPC
     console.log(`  ${ui.bold(`Step 2/${totalSteps}: RPC`)}`);
-    console.log(`  ${ui.dim("You need a Base RPC endpoint. Two options:")}`);
-    console.log(`  ${ui.dim("  1. Bring your own (free from Alchemy, QuickNode, etc.)")}`);
-    console.log(`  ${ui.dim("  2. Auto-pay via QuickNode x402 ($10 USDC for ~1M calls)")}`);
-    const hasRpc = await ui.confirm("Do you have a Base RPC URL?");
+    console.log(`  ${ui.dim("Choose whether your agent pays for RPC via x402 or you provide your own endpoint.")}`);
+    console.log("");
+    console.log(`  ${ui.cyan("1.")} Agent-managed x402 RPC ${ui.dim("(recommended)")}`);
+    console.log(`  ${ui.cyan("2.")} Custom RPC URL`);
+    console.log("");
+    const rpcMode = await ui.prompt("RPC choice", "1");
 
-    if (hasRpc) {
+    if (rpcMode === "2") {
       const rpcUrl = await ui.prompt("RPC URL");
       if (rpcUrl) {
         values.RPC_URL = rpcUrl;
@@ -187,23 +199,21 @@ async function setupWizard(): Promise<void> {
       } else {
         ui.warn("No URL provided — using QuickNode x402");
         values.USE_X402 = "true";
-        ui.ok("RPC: QuickNode x402 ($10 USDC for ~1M calls)");
+        ui.ok("RPC: QuickNode x402");
       }
     } else {
       values.USE_X402 = "true";
-      console.log(`  ${ui.dim("QuickNode x402 will charge $10 USDC from your mining wallet")}`);
-      console.log(`  ${ui.dim("for ~1M RPC calls. No API key or account needed.")}`);
-      ui.ok("RPC: QuickNode x402 ($10 USDC for ~1M calls)");
+      ui.ok("RPC: QuickNode x402 (wallet-paid)");
     }
     console.log("");
 
     // Step 3: LLM (for minting)
-    console.log(`  ${ui.bold(`Step 3/${totalSteps}: LLM Provider (for minting)`)}`);
+    console.log(`  ${ui.bold(`Step 3/${totalSteps}: LLM (minting only)`)}`);
     console.log(`  ${ui.dim("An LLM solves the SMHL challenge when minting your Mining Rig.")}`);
     console.log(`  ${ui.dim("Mining uses optimized solving — no LLM needed after minting.")}`);
-    console.log(`  ${ui.dim("  clawrouter (recommended) — Zero credentials. Pays with USDC from your wallet.")}`);
-    console.log(`  ${ui.dim("  openai / anthropic / gemini / deepseek / qwen — Requires API key.")}`);
-    console.log(`  ${ui.dim("  ollama / claude-code / codex — Local, no API key.")}`);
+    console.log(`  ${ui.dim("  clawrouter (recommended) — wallet-paid via x402")}`);
+    console.log(`  ${ui.dim("  openai / anthropic / gemini / deepseek / qwen — API key")}`);
+    console.log(`  ${ui.dim("  ollama / claude-code / codex — local")}`);
     const providerInput = await ui.prompt("Provider", "clawrouter");
     const provider = (["clawrouter", "openai", "anthropic", "gemini", "ollama", "deepseek", "qwen", "claude-code", "codex"].includes(providerInput) ? providerInput : "clawrouter") as LlmProvider;
     values.LLM_PROVIDER = provider;
@@ -237,6 +247,33 @@ async function setupWizard(): Promise<void> {
 
     if (isExpensiveModel(model)) {
       ui.warn(`${model} is expensive. Consider gpt-4o-mini for lower cost.`);
+    }
+
+    console.log("");
+
+    // Step 4: Nonce grinding strategy
+    console.log(`  ${ui.bold(`Step 4/${totalSteps}: GPU Grinding`)}`);
+    console.log(`  ${ui.dim("Choose how the miner should find nonces at current network difficulty.")}`);
+    console.log("");
+    console.log(`  ${ui.cyan("1.")} Agent-managed x402 GPU ${ui.dim("(recommended, no setup)")}`);
+    console.log(`  ${ui.cyan("2.")} Local / custom grinders only`);
+    console.log(`  ${ui.cyan("3.")} Hybrid ${ui.dim("(x402 GPU + local JS fallback)")}`);
+    console.log("");
+    const grindMode = await ui.prompt("Grinding choice", "1");
+
+    if (grindMode === "2") {
+      values.USE_X402_GRIND = "false";
+      values.ALLOW_LOCAL_FALLBACK_WITH_X402 = "false";
+      ui.ok("Grinding: local/custom only");
+      ui.hint("Configure GPU_GRINDER_PATH, CUDA_GRINDER_PATH, or VAST_* yourself if needed.");
+    } else if (grindMode === "3") {
+      values.USE_X402_GRIND = "true";
+      values.ALLOW_LOCAL_FALLBACK_WITH_X402 = "true";
+      ui.ok("Grinding: x402 GPU with local JS fallback");
+    } else {
+      values.USE_X402_GRIND = "true";
+      values.ALLOW_LOCAL_FALLBACK_WITH_X402 = "false";
+      ui.ok("Grinding: x402 GPU only");
     }
   }
 
@@ -273,7 +310,9 @@ async function setupWizard(): Promise<void> {
   }
 
   console.log("");
-  console.log(`  Next: ${ui.cyan("apow mint")}`);
+  console.log(`  Next: ${ui.cyan("apow fund")}`);
+  console.log(`        ${ui.cyan("apow mint")}`);
+  console.log(`        ${ui.cyan("apow mine")}`);
   console.log("");
 }
 
@@ -300,7 +339,7 @@ async function main(): Promise<void> {
 
   program
     .command("setup")
-    .description("Interactive setup wizard — configure wallet, RPC, and LLM")
+    .description("Agent-first setup wizard — choose Easy Mode (x402 for everything) or Advanced Mode")
     .action(async () => {
       await setupWizard();
     });
@@ -321,7 +360,7 @@ async function main(): Promise<void> {
 
   program
     .command("mint")
-    .description("Mint a new miner NFT")
+    .description("Mint a new miner NFT (Easy Mode: x402 LLM, no API key)")
     .hook("preAction", async () => {
       await runPreflight("wallet");
     })
@@ -331,7 +370,7 @@ async function main(): Promise<void> {
 
   program
     .command("mine")
-    .description("Start the mining loop")
+    .description("Start the mining loop (Easy Mode: remote x402 GPU)")
     .argument("[tokenId]", "Miner token ID (auto-detects if omitted)")
     .hook("preAction", async () => {
       await runPreflight("mining");
@@ -409,7 +448,7 @@ async function main(): Promise<void> {
     .description("Show wallet address from current .env PRIVATE_KEY")
     .action(async () => {
       if (!account) {
-        ui.error("No wallet configured. Set PRIVATE_KEY in .env or run: apow wallet new");
+        ui.error("No wallet configured. Run `apow setup` and choose Easy Mode, or set PRIVATE_KEY in .env.");
         return;
       }
       console.log("");
@@ -422,7 +461,7 @@ async function main(): Promise<void> {
     .description("Export wallet private key (with confirmation)")
     .action(async () => {
       if (!account || !config.privateKey) {
-        ui.error("No wallet configured. Set PRIVATE_KEY in .env or run: apow wallet new");
+        ui.error("No wallet configured. Run `apow setup` and choose Easy Mode, or set PRIVATE_KEY in .env.");
         return;
       }
 

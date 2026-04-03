@@ -129,12 +129,12 @@ const patterns: Array<{
     test: (m) => m.includes("Remote GPU grind timed out") || (m.includes("GrindProxy") && /\b504\b/.test(m)),
     classify: () => ({
       category: "transient" as ErrorCategory,
-      userMessage: "Remote GPU grind timed out (90s)",
+      userMessage: "Remote GPU grind timed out (120s)",
       recovery: "High difficulty — local grinders may still find a nonce.",
     }),
   },
   {
-    test: (m) => m.includes("x402 GPU grind payment failed"),
+    test: (m) => m.includes("x402 GPU grind payment failed") || m.includes("No matching payment requirements"),
     classify: () => ({
       category: "setup" as ErrorCategory,
       userMessage: "Insufficient USDC for x402 GPU grinding",

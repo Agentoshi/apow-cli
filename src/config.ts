@@ -35,6 +35,7 @@ export interface AppConfig {
   remoteGrinderPath: string;
   grindUrl?: string;
   useX402Grind: boolean;
+  allowLocalFallbackWithX402: boolean;
   staleCheckIntervalMs: number;
 }
 
@@ -150,6 +151,7 @@ export const config: AppConfig = {
   useX402Grind: process.env.USE_X402_GRIND !== undefined
     ? process.env.USE_X402_GRIND === "true"
     : useX402, // defaults to USE_X402 value when not explicitly set
+  allowLocalFallbackWithX402: process.env.ALLOW_LOCAL_FALLBACK_WITH_X402 === "true",
   staleCheckIntervalMs: parseInt(process.env.STALE_CHECK_INTERVAL ?? "60", 10) * 1000,
 };
 

@@ -4,6 +4,10 @@ Mining client for the [APoW (Agentic Proof of Work)](https://github.com/Agentosh
 
 **Your agent does all the work. You just fund a wallet.**
 
+`apow setup` is agent-first:
+- `Easy Mode`: no config, x402 for RPC + LLM + GPU grinding
+- `Advanced Mode`: choose which credentials you supply and which services stay autonomous
+
 ## Install
 
 ```bash
@@ -27,32 +31,32 @@ npx apow-cli
 
 ## For AI Agents
 
-Any AI agent can go from zero to actively mining in 5 steps with no human interaction except funding the wallet.
+Any AI agent can go from zero to actively mining with no human interaction except funding the wallet.
 
 ```bash
-# 1. Generate a wallet
-npx apow-cli wallet new
-# → Captures address + private key from stdout
+# 1. Run setup and choose Easy Mode
+npx apow-cli setup
 
-# 2. Write .env (no interactive prompts)
-#    LLM config is only needed for minting; mining uses optimized SMHL solving
-#    RPC: set RPC_URL for a free RPC, or USE_X402=true for auto-pay ($10 USDC)
-cat > .env << 'EOF'
-PRIVATE_KEY=0x<from step 1>
-USE_X402=true
-EOF
-# USE_X402=true auto-activates clawrouter LLM + QuickNode RPC (both pay with USDC)
-# Contract addresses are built-in defaults — no need to specify them
-
-# 3. Fund the wallet (bridge from any chain, auto-splits into ETH + USDC)
+# 2. Fund the wallet (bridge from any chain, auto-splits into ETH + USDC)
 npx apow-cli fund --chain solana --token sol    # bridge SOL → ETH+USDC on Base
 # Or send ETH/USDC on Base directly
 
-# 4. Mint a mining rig NFT (proves AI via LLM, one-time)
+# 3. Mint a mining rig NFT (proves AI via LLM, one-time)
 npx apow-cli mint
 
-# 5. Start mining (runs forever, no LLM needed, multi-threaded)
+# 4. Start mining (Easy Mode uses remote x402 GPU by default)
 npx apow-cli mine
+```
+
+Easy Mode writes an `.env` equivalent to:
+
+```bash
+PRIVATE_KEY=0x...
+USE_X402=true
+USE_X402_GRIND=true
+LLM_PROVIDER=clawrouter
+LLM_MODEL=blockrun/eco
+ALLOW_LOCAL_FALLBACK_WITH_X402=false
 ```
 
 **Scale up** with multiple wallets from a single funded wallet:
@@ -91,7 +95,7 @@ npx apow-cli mine
 
 | Command | Description |
 |---------|-------------|
-| `apow setup` | Interactive setup wizard: configure wallet, RPC, and LLM |
+| `apow setup` | Agent-first setup wizard: Easy Mode (x402 everywhere) or Advanced Mode |
 | `apow fund` | Fund your wallet: bridge from Solana/Ethereum or send on Base, auto-split ETH+USDC |
 | `apow wallet new` | Generate a new mining wallet |
 | `apow wallet show` | Show configured wallet address |
@@ -111,6 +115,8 @@ Create a `.env` file or use `apow setup`:
 ```bash
 PRIVATE_KEY=0x...              # Your wallet private key
 USE_X402=true                  # Auto-pay RPC + LLM via x402 ($10 USDC for ~1M calls, zero API keys)
+USE_X402_GRIND=true            # Auto-pay remote GPU grinding via x402
+ALLOW_LOCAL_FALLBACK_WITH_X402=false  # Easy Mode default: do not burn local CPU while x402 GPU is active
 # RPC_URL=https://...          # Or: bring your own RPC (free from Alchemy, QuickNode, etc.)
 # LLM_PROVIDER=clawrouter     # clawrouter (auto with x402) | openai | gemini | deepseek | qwen | anthropic | ollama (for minting)
 # LLM_MODEL=blockrun/eco      # Auto-detected per provider; override only if needed
@@ -169,15 +175,17 @@ apow fund --chain base --no-swap
 No GPU? No problem. Remote RTX 4090 nonce grinding via the [x402 payment protocol](https://www.x402.org/) — ~$0.006/grind (dynamic pricing tracks actual GPU cost), zero setup:
 
 ```bash
-# In your .env (enabled automatically when USE_X402=true)
+# In your .env (enabled automatically in Easy Mode)
 USE_X402_GRIND=true
+# ALLOW_LOCAL_FALLBACK_WITH_X402=true   # Advanced Mode hybrid option
 ```
 
-The HTTP grinder races alongside any local grinders you have. First valid nonce wins. Front-running is cryptographically impossible — nonces are bound to `keccak256(challenge, msg.sender, nonce)`.
+In Easy Mode, the HTTP grinder is the only nonce source, so agents do not silently burn local CPU while remote x402 GPU mining is active. Advanced Mode can opt into a hybrid local fallback. Front-running is cryptographically impossible — nonces are bound to `keccak256(challenge, msg.sender, nonce)`.
 
 | Config | Description |
 |--------|-------------|
 | `USE_X402_GRIND` | Enable remote GPU grinding (default: same as `USE_X402`) |
+| `ALLOW_LOCAL_FALLBACK_WITH_X402` | Let local JS fallback run alongside x402 GPU (`false` in Easy Mode) |
 | `GRIND_URL` | Custom GrindProxy endpoint (default: `https://grind.apow.io/grind`) |
 
 Self-host your own GrindProxy: see [apow-grind](https://github.com/Agentoshi/apow-grind).
