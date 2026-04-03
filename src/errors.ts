@@ -114,7 +114,7 @@ const patterns: Array<{
     classify: () => ({
       category: "transient",
       userMessage: "QuickNode x402 credit purchase failed — check USDC balance on Base",
-      recovery: "Send USDC to your wallet on Base (~$10 for ~1M RPC calls), or set RPC_URL in .env to use a custom RPC",
+      recovery: "Send at least 2.00 USDC to your wallet on Base for x402 starting balance, or set RPC_URL in .env to use a custom RPC",
     }),
   },
   {
@@ -161,8 +161,16 @@ const patterns: Array<{
     test: (m) => m.includes("Remote GPU grind timed out") || (m.includes("GrindProxy") && /\b504\b/.test(m)),
     classify: () => ({
       category: "transient" as ErrorCategory,
-      userMessage: "Remote GPU grind timed out (120s)",
-      recovery: "High difficulty — local grinders may still find a nonce.",
+      userMessage: "Remote GPU grind timed out",
+      recovery: "Retrying with a fresh remote grind request...",
+    }),
+  },
+  {
+    test: (m) => m.includes("Remote GPU grind request failed"),
+    classify: () => ({
+      category: "transient" as ErrorCategory,
+      userMessage: "Remote GPU grind request failed",
+      recovery: "Retrying with a fresh remote grind request...",
     }),
   },
   {

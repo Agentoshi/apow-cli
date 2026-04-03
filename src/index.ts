@@ -68,6 +68,14 @@ function readVersion(): string {
   }
 }
 
+function shouldSkipUpdateCheck(argv: string[]): boolean {
+  return argv.includes("--help")
+    || argv.includes("-h")
+    || argv.includes("--version")
+    || argv.includes("-V")
+    || argv[0] === "help";
+}
+
 async function resolveTokenId(tokenIdArg?: string): Promise<bigint> {
   if (tokenIdArg) {
     return parseTokenId(tokenIdArg);
@@ -75,7 +83,7 @@ async function resolveTokenId(tokenIdArg?: string): Promise<bigint> {
 
   if (!account) {
     ui.error("No token ID provided and no wallet configured.");
-    ui.hint("Usage: apow mine <tokenId>, or run `apow setup` and choose Easy Mode");
+    ui.hint("Usage: apow mine <tokenId>, or run `apow start` for the guided happy path");
     process.exit(1);
   }
 
@@ -191,7 +199,7 @@ async function setupWizard(): Promise<void> {
     ui.ok("LLM: ClawRouter x402 (wallet-paid, no API key)");
     ui.ok("Grinder: x402 GPU (remote, wallet-paid, no local CPU fallback)");
     console.log(`  ${ui.dim("Easy mode is agent-first: no RPC key, no LLM key, no GPU rental setup.")}`);
-    console.log(`  ${ui.dim("Fund the wallet with ETH + USDC on Base, then run: apow mint && apow mine")}`);
+    console.log(`  ${ui.dim("Fund the wallet with ETH + USDC on Base, then run: apow start")}`);
   } else {
     // Advanced: user picks which services remain autonomous
     // Step 2: RPC
@@ -324,9 +332,8 @@ async function setupWizard(): Promise<void> {
   }
 
   console.log("");
-  console.log(`  Next: ${ui.cyan("apow fund")}`);
-  console.log(`        ${ui.cyan("apow mint")}`);
-  console.log(`        ${ui.cyan("apow mine")}`);
+  console.log(`  Next: ${ui.cyan("apow start")}`);
+  console.log(`        ${ui.dim("Guided happy path: setup -> fund -> mint -> mine")}`);
   console.log("");
 }
 
@@ -430,7 +437,10 @@ async function runStartFlow(): Promise<void> {
 
 async function main(): Promise<void> {
   const version = readVersion();
-  void warnIfUpdateAvailable(version);
+  const argv = process.argv.slice(2);
+  if (!shouldSkipUpdateCheck(argv)) {
+    void warnIfUpdateAvailable(version);
+  }
   const program = new Command();
 
   // SIGINT handler

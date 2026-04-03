@@ -1,17 +1,20 @@
 import type { Abi, Address } from "viem";
-import { createPublicClient, formatEther, formatUnits, http } from "viem";
+import { createPublicClient, formatEther, formatUnits, http, parseEther } from "viem";
 import { base } from "viem/chains";
 
 import agentCoinAbiJson from "./abi/AgentCoin.json";
+import miningAgentAbiJson from "./abi/MiningAgent.json";
 import { config } from "./config";
 import { getGrindUrl, isHttpGrinderConfigured } from "./grinder-http";
 import { publicClient, account } from "./wallet";
 import * as ui from "./ui";
 
 const agentCoinAbi = agentCoinAbiJson as Abi;
+const miningAgentAbi = miningAgentAbiJson as Abi;
 
 const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address;
 const USDC_DECIMALS = 6;
+const MINT_GAS_RESERVE_ETH = parseEther("0.003");
 
 const erc20BalanceAbi = [
   {
@@ -76,7 +79,7 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
         results.push({
           label: "No USDC balance — QuickNode x402 requires USDC on Base",
           passed: false,
-          fix: `Send USDC to ${account.address} on Base (~$10 covers ${config.llmProvider === "clawrouter" ? "RPC, LLM, and remote GPU grinding" : "~1M RPC calls"}). Run \`apow fund\` to bridge from Solana or Ethereum.`,
+          fix: `Send at least 2.00 USDC to ${account.address} on Base for x402 starting balance; add more if you want extra headroom. Run \`apow fund\` to bridge from Solana or Ethereum.`,
         });
       } else {
         x402Funded = true;
@@ -140,7 +143,27 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
       try {
         const balance = await publicClient.getBalance({ address: account.address });
         const ethBalance = Number(formatEther(balance));
-        if (ethBalance < 0.001) {
+        if (level === "wallet") {
+          const mintPrice = (await publicClient.readContract({
+            address: config.miningAgentAddress,
+            abi: miningAgentAbi,
+            functionName: "getMintPrice",
+          })) as bigint;
+          const requiredBalance = mintPrice + MINT_GAS_RESERVE_ETH;
+
+          if (balance < requiredBalance) {
+            results.push({
+              label: `Mint-ready ETH balance (${ethBalance.toFixed(6)} ETH)`,
+              passed: false,
+              fix: `Mint needs ${formatEther(mintPrice)} ETH for the rig plus ~${formatEther(MINT_GAS_RESERVE_ETH)} ETH for the getChallenge and mint transactions. Send at least ${formatEther(requiredBalance)} ETH to ${account.address} on Base.`,
+            });
+          } else {
+            results.push({
+              label: `Mint-ready ETH balance (${ethBalance.toFixed(6)} ETH)`,
+              passed: true,
+            });
+          }
+        } else if (ethBalance < 0.001) {
           results.push({
             label: `Low ETH balance (${ethBalance.toFixed(6)} ETH)`,
             passed: false,

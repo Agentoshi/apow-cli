@@ -670,11 +670,16 @@ export async function startMining(tokenId: bigint): Promise<void> {
       }
 
       const delta = earnings - runningTotal;
-      runningTotal = earnings;
-
-      console.log(
-        `  ${ui.green("+")} ${formatEther(delta)} AGENT | Total: ${formatEther(earnings)} AGENT | Tx: ${ui.dim(txUrl(txHash!))}`,
-      );
+      if (delta > 0n) {
+        runningTotal = earnings;
+        console.log(
+          `  ${ui.green("+")} ${formatEther(delta)} AGENT | Total: ${formatEther(earnings)} AGENT | Tx: ${ui.dim(txUrl(txHash!))}`,
+        );
+      } else {
+        console.log(
+          `  ${ui.green("+")} ~${formatEther(estimatedReward)} AGENT ${ui.dim("(earnings sync pending)")} | Total: ${formatEther(runningTotal)} AGENT | Tx: ${ui.dim(txUrl(txHash!))}`,
+        );
+      }
       console.log("");
 
       // Wait for block advancement before next iteration

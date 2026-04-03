@@ -8,6 +8,9 @@ Mining client for the [APoW (Agentic Proof of Work)](https://github.com/Agentosh
 - `Easy Mode`: no config, x402 for RPC + LLM + GPU grinding
 - `Advanced Mode`: choose which credentials you supply and which services stay autonomous
 
+`apow start` is the fastest path when you want the full flow in one command:
+setup, funding checks, minting, and mining.
+
 ## Install
 
 ```bash
@@ -32,20 +35,10 @@ npx apow-cli
 ## For AI Agents
 
 Any AI agent can go from zero to actively mining with no human interaction except funding the wallet.
+If the wallet is already configured, `apow start` skips ahead automatically.
 
 ```bash
-# 1. Run setup and choose Easy Mode
-npx apow-cli setup
-
-# 2. Fund the wallet (bridge from any chain, auto-splits into ETH + USDC)
-npx apow-cli fund --chain solana --token sol    # bridge SOL → ETH+USDC on Base
-# Or send ETH/USDC on Base directly
-
-# 3. Mint a mining rig NFT (proves AI via LLM, one-time)
-npx apow-cli mint
-
-# 4. Start mining (Easy Mode uses remote x402 GPU by default)
-npx apow-cli mine
+npx apow-cli start
 ```
 
 Easy Mode writes an `.env` equivalent to:
@@ -78,23 +71,16 @@ Each wallet gets one rig, each rig mines independently. More wallets = more chan
 If you prefer to do it yourself:
 
 ```bash
-# 1. Interactive setup: wallet, RPC, LLM config
-npx apow-cli setup
-
-# 2. Fund your wallet (bridge from Solana/Ethereum or send ETH directly)
-npx apow-cli fund
-
-# 3. Mint a mining rig NFT
-npx apow-cli mint
-
-# 4. Start mining
-npx apow-cli mine
+npx apow-cli start   # guided happy path: setup -> fund -> mint -> mine
 ```
+
+If you want to control each step manually, the older `setup -> fund -> mint -> mine` flow is still supported below.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
+| `apow start` | Guided happy path: setup -> fund -> mint -> mine |
 | `apow setup` | Agent-first setup wizard: Easy Mode (x402 everywhere) or Advanced Mode |
 | `apow fund` | Fund your wallet: bridge from Solana/Ethereum or send on Base, auto-split ETH+USDC |
 | `apow wallet new` | Generate a new mining wallet |
@@ -114,7 +100,7 @@ Create a `.env` file or use `apow setup`:
 
 ```bash
 PRIVATE_KEY=0x...              # Your wallet private key
-USE_X402=true                  # Auto-pay RPC + LLM via x402 ($10 USDC for ~1M calls, zero API keys)
+USE_X402=true                  # Auto-pay RPC + LLM via x402 (2.00 USDC minimum starting balance, zero API keys)
 USE_X402_GRIND=true            # Auto-pay remote GPU grinding via x402
 ALLOW_LOCAL_FALLBACK_WITH_X402=false  # Easy Mode default: do not burn local CPU while x402 GPU is active
 # RPC_URL=https://...          # Or: bring your own RPC (free from Alchemy, QuickNode, etc.)
@@ -148,7 +134,7 @@ An LLM is required to mint your Mining Rig NFT (one-time identity verification).
 
 ## Funding (v0.7.0+)
 
-Mining requires two assets on Base: **ETH** (gas) and **USDC** (x402 RPC). The `fund` command bridges from Solana or Ethereum, or accepts deposits on Base, and auto-splits into both:
+Mining requires two assets on Base: **ETH** (gas) and **USDC** (x402 RPC). `apow start` checks both and can auto-split the wallet into the right mix. The `fund` command also bridges from Solana or Ethereum, or accepts deposits on Base, and auto-splits into both:
 
 ```bash
 # From Solana (deposit address — send from any wallet, QR code included)
@@ -168,7 +154,7 @@ apow fund --chain base --no-swap
 
 **Solana/Ethereum bridging:** Uses [Squid Router](https://squidrouter.com/) (Chainflip). Generates a one-time deposit address with QR code — send from any wallet. Requires `SQUID_INTEGRATOR_ID` in `.env` (free at [squidrouter.com](https://app.squidrouter.com/)).
 
-**Auto-split targets:** 0.003 ETH (gas for ~100 mine txns) + 2.00 USDC (~100K x402 RPC calls). If both are already met, the CLI skips the swap.
+**Auto-split targets:** 0.003 ETH (gas for ~100 mine txns) + 2.00 USDC (minimum x402 starting balance). If both are already met, the CLI skips the swap.
 
 ## x402 GPU Grinding
 

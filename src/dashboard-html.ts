@@ -81,8 +81,8 @@ a{color:inherit;text-decoration:none}
     <div class="status"><span class="pulse" id="statusDot"></span><span id="statusText">Loading...</span></div>
   </div>
   <div id="rpcWarning" class="rpc-warning" style="display:none">
-    Using public Base RPC (mainnet.base.org) — this is unreliable for dashboards with many wallets.
-    Get a free dedicated endpoint at <a href="https://www.alchemy.com/base" target="_blank" rel="noopener noreferrer">alchemy.com</a> for reliable data.
+    Set <code>RPC_URL</code> in your <code>.env</code> for reliable dashboard refreshes.
+    A dedicated Base RPC is recommended for fleets.
   </div>
   <div id="errorBanner" class="error-banner" style="display:none">Failed to fetch data. Check RPC connection.</div>
   <div id="fleetTabs" class="fleet-tabs" style="display:none"></div>

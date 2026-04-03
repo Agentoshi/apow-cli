@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { Address, Chain, Hex } from "viem";
 import { base, baseSepolia } from "viem/chains";
 
-loadEnv();
+loadEnv({ quiet: true });
 
 export type LlmProvider = "openai" | "anthropic" | "ollama" | "gemini" | "claude-code" | "codex" | "deepseek" | "qwen" | "clawrouter";
 export type ChainName = "base" | "baseSepolia";

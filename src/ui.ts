@@ -1,7 +1,8 @@
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout, stderr } from "node:process";
 
-const isTTY = stdout.isTTY && stderr.isTTY;
+const isTTY = !!stdout.isTTY && !!stderr.isTTY;
+const isInteractive = !!stdin.isTTY && isTTY;
 const noColor = !!process.env.NO_COLOR || !isTTY;
 
 function wrap(code: number, reset: number): (s: string) => string {
@@ -100,7 +101,7 @@ export function stopAll(): void {
 }
 
 export async function confirm(question: string): Promise<boolean> {
-  if (!isTTY) return true;
+  if (!isInteractive) return true;
   const rl = createInterface({ input: stdin, output: stderr });
   const answer = await rl.question(`  ${question} ${dim("(Y/n)")} `);
   rl.close();
@@ -109,6 +110,9 @@ export async function confirm(question: string): Promise<boolean> {
 }
 
 export async function prompt(question: string, defaultValue?: string): Promise<string> {
+  if (!isInteractive) {
+    return defaultValue ?? "";
+  }
   const rl = createInterface({ input: stdin, output: stderr });
   const hint = defaultValue ? ` ${dim(`[${defaultValue}`)}${dim("]")}` : "";
   const answer = await rl.question(`  ${question}${hint}: `);
@@ -117,6 +121,9 @@ export async function prompt(question: string, defaultValue?: string): Promise<s
 }
 
 export async function promptSecret(question: string): Promise<string> {
+  if (!isInteractive) {
+    return "";
+  }
   const rl = createInterface({ input: stdin, output: stderr });
   const answer = await rl.question(`  ${question}: `);
   rl.close();

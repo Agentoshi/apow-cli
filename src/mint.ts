@@ -1,5 +1,5 @@
 import type { Abi, Hex } from "viem";
-import { formatEther, hexToBytes } from "viem";
+import { formatEther, hexToBytes, parseEther } from "viem";
 
 import miningAgentAbiJson from "./abi/MiningAgent.json";
 import { config } from "./config";
@@ -12,6 +12,7 @@ import { getEthBalance, publicClient, requireWallet } from "./wallet";
 
 const miningAgentAbi = miningAgentAbiJson as Abi;
 const ZERO_SEED = `0x${"0".repeat(64)}` as Hex;
+const MINT_GAS_RESERVE_ETH = parseEther("0.003");
 
 export interface MintFlowOptions {
   startMiningAfterMint?: boolean;
@@ -105,13 +106,17 @@ export async function runMintFlow(options: MintFlowOptions = {}): Promise<bigint
   console.log("");
   ui.table([
     ["Mint price", `${formatEther(mintPrice)} ETH`],
+    ["Gas reserve", `${formatEther(MINT_GAS_RESERVE_ETH)} ETH (getChallenge + mint)`],
+    ["Required", `${formatEther(mintPrice + MINT_GAS_RESERVE_ETH)} ETH total`],
     ["Balance", `${Number(formatEther(ethBalance)).toFixed(6)} ETH`],
   ]);
   console.log("");
 
-  if (ethBalance < mintPrice) {
-    ui.error("Insufficient ETH for mint.");
-    ui.hint(`Send at least ${formatEther(mintPrice)} ETH to ${account.address} on Base`);
+  const requiredBalance = mintPrice + MINT_GAS_RESERVE_ETH;
+  if (ethBalance < requiredBalance) {
+    ui.error("Insufficient ETH for mint and challenge gas.");
+    ui.hint(`Mint uses 2 transactions: getChallenge and mint.`);
+    ui.hint(`Send at least ${formatEther(requiredBalance)} ETH to ${account.address} on Base.`);
     return null;
   }
 

@@ -198,7 +198,7 @@ async function showFinalBalances(): Promise<void> {
   const usdcBal = Number(formatUnits(await getUsdcBalance(account.address), 6));
 
   console.log("");
-  console.log(`  ${ui.green("Ready to mine!")}`);
+  console.log(`  ${ui.green("Ready to mint!")}`);
   ui.table([
     ["ETH", `${ethBal.toFixed(6)} ETH (gas)`],
     ["USDC", `${usdcBal.toFixed(2)} USDC (x402 RPC)`],
@@ -589,7 +589,7 @@ export async function runFundFlow(options: FundOptions): Promise<void> {
 
   // Already funded?
   if (ethBalance >= MIN_ETH && usdcBalance >= MIN_USDC) {
-    console.log(`  ${ui.green("Already funded! Ready to mine.")}`);
+    console.log(`  ${ui.green("Already funded! Ready to mint.")}`);
     console.log(`  Next: ${ui.cyan("apow mint")}`);
     console.log("");
 

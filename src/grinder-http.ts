@@ -15,6 +15,7 @@ import type { GrindResult } from "./grinder";
 import { config } from "./config";
 
 const DEFAULT_GRIND_URL = "https://grind.apow.io/grind";
+const GRIND_HTTP_TIMEOUT_MS = 20_000;
 
 // Lazy singleton — created on first grind, reused across calls
 let _fetchWithPayment: typeof fetch | null = null;
@@ -68,6 +69,8 @@ export async function grindNonceHttp(
   signal?: AbortSignal,
 ): Promise<GrindResult> {
   const start = process.hrtime();
+  const timeoutSignal = AbortSignal.timeout(GRIND_HTTP_TIMEOUT_MS);
+  const requestSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
   const requestInit = {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -76,13 +79,28 @@ export async function grindNonceHttp(
       target: target.toString(),
       address: minerAddress,
     }),
-    signal,
+    signal: requestSignal,
   } satisfies RequestInit;
 
   let response: Response | null = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const paidFetch = await getPaymentFetch(privateKey);
-    response = await paidFetch(grindUrl, requestInit);
+    try {
+      response = await paidFetch(grindUrl, requestInit);
+    } catch (err) {
+      if (signal?.aborted) {
+        throw err;
+      }
+      if (timeoutSignal.aborted) {
+        resetPaymentFetch();
+        throw new Error(`Remote GPU grind timed out (${GRIND_HTTP_TIMEOUT_MS / 1000}s)`);
+      }
+      resetPaymentFetch();
+      if (attempt === 1) {
+        continue;
+      }
+      throw new Error(`Remote GPU grind request failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     if (response.ok) {
       break;
@@ -100,22 +118,26 @@ export async function grindNonceHttp(
     }
 
     const combinedError = `${reason} ${bodyDetail}`.trim();
-    if (attempt === 1 && combinedError.includes("No matching payment requirements")) {
+    const stalePaymentSession = /No matching payment requirements|facilitator|payment session|authorization/i.test(combinedError);
+    if (attempt === 1 && (stalePaymentSession || response.status >= 500)) {
       resetPaymentFetch();
       continue;
     }
 
     if (response.status === 402) {
+      resetPaymentFetch();
       if (reason.includes("insufficient_balance")) {
         throw new Error("x402 GPU payment failed: insufficient USDC balance");
       } else if (reason.includes("simulation_failed")) {
         throw new Error(`x402 GPU payment failed: EVM simulation failed (USDC approval issue?) [${reason}]`);
+      } else if (attempt === 1) {
+        continue;
       } else {
         throw new Error(`x402 GPU payment failed: ${reason || bodyDetail.slice(0, 200) || "unknown"}`);
       }
     }
     if (response.status === 504) {
-      throw new Error("Remote GPU grind timed out (120s)");
+      throw new Error(`Remote GPU grind timed out (${GRIND_HTTP_TIMEOUT_MS / 1000}s)`);
     }
     throw new Error(`GrindProxy HTTP ${response.status}: ${(bodyDetail || body).slice(0, 200)}`);
   }
