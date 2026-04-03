@@ -102,6 +102,14 @@ const patterns: Array<{
     }),
   },
   {
+    test: (m) => m.includes("x402 payment failed — insufficient USDC balance on Base"),
+    classify: () => ({
+      category: "setup",
+      userMessage: "Insufficient USDC for QuickNode x402 RPC",
+      recovery: "Send USDC to your wallet on Base, or set RPC_URL in .env to use your own RPC",
+    }),
+  },
+  {
     test: (m) => /\b402\b/.test(m) || m.includes("QuickNode x402") || (m.toLowerCase().includes("insufficient") && m.toLowerCase().includes("usdc")),
     classify: () => ({
       category: "transient",

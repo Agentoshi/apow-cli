@@ -471,10 +471,17 @@ async function main(): Promise<void> {
     .option("--token <token>", "Source token: sol, usdc, eth")
     .option("--amount <eth>", "Target ETH amount (default: 0.005)")
     .option("--no-swap", "Skip auto-split after bridging")
-    .hook("preAction", async () => {
-      await runPreflight("readonly");
-    })
     .action(async (opts: { chain?: string; token?: string; amount?: string; swap?: boolean }) => {
+      if (!config.privateKey || !account) {
+        ui.warn("No wallet configured — launching setup first.");
+        await setupWizard();
+        reloadConfig();
+        reinitClients();
+        if (!account) {
+          ui.error("Wallet configuration did not complete.");
+          return;
+        }
+      }
       await runFundFlow(opts);
     });
 

@@ -23,8 +23,8 @@ const agentCoinAbi = agentCoinAbiJson as Abi;
 const miningAgentAbi = miningAgentAbiJson as Abi;
 
 const MAX_CONSECUTIVE_FAILURES = 10;
-const BASE_BACKOFF_MS = 2_000;
-const MAX_BACKOFF_MS = 60_000;
+const RETRY_DELAY_MS = 2_000;
+const RETRY_JITTER_MS = 500;
 
 const BASE_REWARD = 3n * 10n ** 18n;
 const REWARD_DECAY_NUM = 90n;
@@ -74,10 +74,8 @@ function rejectOnAbort(signal: AbortSignal): Promise<never> {
   });
 }
 
-function backoffMs(failures: number): number {
-  const base = Math.min(BASE_BACKOFF_MS * 2 ** (failures - 1), MAX_BACKOFF_MS);
-  const jitter = Math.random() * base * 0.3;
-  return base + jitter;
+function retryDelayMs(): number {
+  return RETRY_DELAY_MS + Math.random() * RETRY_JITTER_MS;
 }
 
 function estimateReward(totalMines: bigint, eraInterval: bigint, hashpower: bigint): bigint {
@@ -709,7 +707,7 @@ export async function startMining(tokenId: bigint): Promise<void> {
         return;
       }
 
-      const delay = backoffMs(consecutiveFailures);
+      const delay = retryDelayMs();
       ui.error(`${classified.userMessage} (${consecutiveFailures}/${MAX_CONSECUTIVE_FAILURES})`);
       if (classified.recovery) ui.hint(classified.recovery);
       console.log(`  ${ui.dim(`Retrying in ${(delay / 1000).toFixed(1)}s...`)}`);

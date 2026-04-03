@@ -3,6 +3,7 @@ import type { QuicknodeX402Client } from "@quicknode/x402";
 
 const QUICKNODE_BASE = "https://x402.quicknode.com";
 const BASE_MAINNET = "eip155:8453";
+const X402_RPC_TIMEOUT_MS = 10_000;
 
 let _client: QuicknodeX402Client | null = null;
 
@@ -28,6 +29,7 @@ export function createX402Transport(privateKey: `0x${string}`): Transport {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", method, params, id: 1 }),
+        signal: AbortSignal.timeout(X402_RPC_TIMEOUT_MS),
       });
 
       if (response.status === 402) {
