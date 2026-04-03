@@ -593,6 +593,10 @@ export async function runFundFlow(options: FundOptions): Promise<void> {
     console.log(`  Next: ${ui.cyan("apow mint")}`);
     console.log("");
 
+    if (!ui.isInteractiveSession()) {
+      return;
+    }
+
     // Allow explicit re-run if user wants to add more
     const addMore = await ui.confirm("Add more funds?");
     if (!addMore) return;

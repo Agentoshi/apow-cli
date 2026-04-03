@@ -5,6 +5,10 @@ const isTTY = !!stdout.isTTY && !!stderr.isTTY;
 const isInteractive = !!stdin.isTTY && isTTY;
 const noColor = !!process.env.NO_COLOR || !isTTY;
 
+export function isInteractiveSession(): boolean {
+  return isInteractive;
+}
+
 function wrap(code: number, reset: number): (s: string) => string {
   if (noColor) return (s) => s;
   return (s) => `\x1b[${code}m${s}\x1b[${reset}m`;
@@ -47,10 +51,19 @@ const activeSpinners = new Set<Spinner>();
 export function spinner(label: string): Spinner {
   if (!isTTY) {
     console.error(`  ${label}`);
+    let finished = false;
     const noop: Spinner = {
-      update(l) { console.error(`  ${l}`); },
-      stop(l) { console.error(`  ${l}`); },
-      fail(l) { console.error(`  ${l}`); },
+      update() {},
+      stop(l) {
+        if (finished) return;
+        finished = true;
+        console.error(`  ${l}`);
+      },
+      fail(l) {
+        if (finished) return;
+        finished = true;
+        console.error(`  ${l}`);
+      },
     };
     return noop;
   }

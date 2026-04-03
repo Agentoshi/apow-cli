@@ -21,6 +21,7 @@ import { runPreflight } from "./preflight";
 import { displayStats } from "./stats";
 import { warnIfUpdateAvailable } from "./update";
 import * as ui from "./ui";
+import { detectWalletAddressFromFilename, saveEncryptedKeystoreFile, savePlaintextImportFile } from "./wallet-store";
 import { account, getEthBalance, publicClient, reinitClients, requireWallet } from "./wallet";
 
 const miningAgentAbi = miningAgentAbiJson as Abi;
@@ -33,23 +34,7 @@ const erc20BalanceAbi = [
     stateMutability: "view" as const,
   },
 ] as const;
-
-function saveKeyFile(address: string, privateKey: string): string {
-  const filename = `wallet-${address}.txt`;
-  const filepath = join(process.cwd(), filename);
-  const content = [
-    `Address:     ${address}`,
-    `Private Key: ${privateKey}`,
-    ``,
-    `Generated:   ${new Date().toISOString()}`,
-    ``,
-    `Import this key into MetaMask, Phantom, or any EVM wallet.`,
-    `Keep this file safe — anyone with the private key controls your funds.`,
-    "",
-  ].join("\n");
-  writeFileSync(filepath, content, { encoding: "utf8", mode: 0o600 });
-  return filepath;
-}
+const TRANSFER_GAS_RESERVE_ETH = parseEther("0.00005");
 
 function parseTokenId(value: string): bigint {
   try {
@@ -68,44 +53,78 @@ function readVersion(): string {
   }
 }
 
+function ensureGitignoreSafetyEntries(): void {
+  const gitignorePath = join(process.cwd(), ".gitignore");
+  const wanted = [".env", "wallet-*.txt"];
+  const existing = existsSync(gitignorePath) ? readFileSync(gitignorePath, "utf8") : "";
+  const missing = wanted.filter((entry) => !existing.split(/\r?\n/).includes(entry));
+  if (missing.length === 0) {
+    return;
+  }
+
+  const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+  const content = `${existing}${prefix}${missing.join("\n")}\n`;
+  writeFileSync(gitignorePath, content, "utf8");
+  ui.ok(`Updated .gitignore: added ${missing.join(", ")}`);
+}
+
+async function maybeCreateEncryptedKeystoreBackup(
+  address: `0x${string}`,
+  privateKey: `0x${string}`,
+): Promise<string | null> {
+  const envPassword = process.env.KEYSTORE_PASSWORD?.trim();
+  let password = envPassword ?? "";
+
+  if (!password && ui.isInteractiveSession()) {
+    const createBackup = await ui.confirm("Create encrypted JSON keystore backup? (recommended)");
+    if (!createBackup) {
+      return null;
+    }
+
+    const entered = await ui.promptSecret("Keystore password");
+    const confirm = await ui.promptSecret("Confirm keystore password");
+    if (!entered) {
+      ui.warn("No keystore password entered — skipping encrypted backup.");
+      return null;
+    }
+    if (entered !== confirm) {
+      ui.warn("Keystore passwords did not match — skipping encrypted backup.");
+      return null;
+    }
+    password = entered;
+  }
+
+  if (!password) {
+    return null;
+  }
+
+  return saveEncryptedKeystoreFile(address, privateKey, password);
+}
+
+async function saveWalletArtifacts(
+  address: `0x${string}`,
+  privateKey: `0x${string}`,
+  opts: { createPlaintextImportFile?: boolean } = {},
+): Promise<{ plaintextPath?: string; keystorePath?: string }> {
+  const result: { plaintextPath?: string; keystorePath?: string } = {};
+
+  if (opts.createPlaintextImportFile !== false) {
+    result.plaintextPath = savePlaintextImportFile(address, privateKey);
+  }
+
+  const keystorePath = await maybeCreateEncryptedKeystoreBackup(address, privateKey);
+  if (keystorePath) {
+    result.keystorePath = keystorePath;
+  }
+  return result;
+}
+
 function shouldSkipUpdateCheck(argv: string[]): boolean {
   return argv.includes("--help")
     || argv.includes("-h")
     || argv.includes("--version")
     || argv.includes("-V")
     || argv[0] === "help";
-}
-
-async function resolveTokenId(tokenIdArg?: string): Promise<bigint> {
-  if (tokenIdArg) {
-    return parseTokenId(tokenIdArg);
-  }
-
-  if (!account) {
-    ui.error("No token ID provided and no wallet configured.");
-    ui.hint("Usage: apow mine <tokenId>, or run `apow start` for the guided happy path");
-    process.exit(1);
-  }
-
-  const miners = await detectMiners(account.address);
-  if (miners.length === 0) {
-    ui.error("No mining rigs found for this wallet.");
-    ui.hint("Run `apow mint` to mint a miner NFT first.");
-    process.exit(1);
-  }
-
-  const best = selectBestMiner(miners);
-  if (miners.length === 1) {
-    console.log(`  Using miner #${best.tokenId} (${best.rarityLabel}, ${formatHashpower(best.hashpower)})`);
-  } else {
-    console.log(`  Found ${miners.length} miners — using #${best.tokenId} (${best.rarityLabel}, ${formatHashpower(best.hashpower)})`);
-    for (const m of miners) {
-      const marker = m.tokenId === best.tokenId ? ui.green(" *") : "  ";
-      console.log(`  ${marker} #${m.tokenId} — ${m.rarityLabel} (${formatHashpower(m.hashpower)})`);
-    }
-  }
-
-  return best.tokenId;
 }
 
 async function setupWizard(): Promise<void> {
@@ -177,9 +196,16 @@ async function setupWizard(): Promise<void> {
     console.log(`  ${ui.dim("Fund this address with ≥0.005 ETH on Base to start.")}`);
     console.log("");
 
-    const keyPath = saveKeyFile(addr, privateKey);
-    console.log(`  ${ui.dim(`Key saved to: ${keyPath}`)}`);
-    console.log(`  ${ui.yellow("Back up this file securely, then delete it.")}`);
+    const artifacts = await saveWalletArtifacts(addr as `0x${string}`, privateKey as `0x${string}`);
+    if (artifacts.plaintextPath) {
+      console.log(`  ${ui.dim(`Import helper saved to: ${artifacts.plaintextPath}`)}`);
+      console.log(`  ${ui.yellow("This plaintext file is easy to import, but less secure than an encrypted keystore.")}`);
+    }
+    if (artifacts.keystorePath) {
+      console.log(`  ${ui.dim(`Encrypted keystore saved to: ${artifacts.keystorePath}`)}`);
+    } else {
+      console.log(`  ${ui.dim("Tip: set KEYSTORE_PASSWORD or rerun wallet export to create an encrypted JSON keystore backup.")}`);
+    }
     console.log("");
   }
 
@@ -317,19 +343,7 @@ async function setupWizard(): Promise<void> {
   reloadConfig();
   reinitClients();
   ui.ok("Config saved to .env");
-
-  // Check .gitignore
-  const gitignorePath = join(process.cwd(), ".gitignore");
-  if (existsSync(gitignorePath)) {
-    const gitignore = readFileSync(gitignorePath, "utf8");
-    if (!gitignore.includes(".env")) {
-      ui.warn(".gitignore does not include .env — your secrets may be committed!");
-      ui.hint("Add .env and wallet-*.txt to .gitignore");
-    }
-    if (!gitignore.includes("wallet-")) {
-      ui.hint("Consider adding wallet-*.txt to .gitignore");
-    }
-  }
+  ensureGitignoreSafetyEntries();
 
   console.log("");
   console.log(`  Next: ${ui.cyan("apow start")}`);
@@ -425,14 +439,7 @@ async function runStartFlow(): Promise<void> {
     }
   }
 
-  const tokenId = await runMintFlow({ startMiningAfterMint: false });
-  if (!tokenId) {
-    return;
-  }
-
-  console.log("");
-  await runPreflight("mining");
-  await startMining(tokenId);
+  await runMintFlow({ startMiningAfterMint: true });
 }
 
 async function main(): Promise<void> {
@@ -498,10 +505,18 @@ async function main(): Promise<void> {
   program
     .command("mint")
     .description("Mint a new miner NFT (Easy Mode: x402 LLM, no API key)")
-    .hook("preAction", async () => {
-      await runPreflight("wallet");
-    })
     .action(async () => {
+      if (!config.privateKey || !account) {
+        ui.warn("No wallet configured — launching setup first.");
+        await setupWizard();
+        reloadConfig();
+        reinitClients();
+        if (!account) {
+          ui.error("Wallet configuration did not complete.");
+          return;
+        }
+      }
+      await runPreflight("wallet");
       await runMintFlow();
     });
 
@@ -509,11 +524,41 @@ async function main(): Promise<void> {
     .command("mine")
     .description("Start the mining loop (Easy Mode: remote x402 GPU)")
     .argument("[tokenId]", "Miner token ID (auto-detects if omitted)")
-    .hook("preAction", async () => {
-      await runPreflight("mining");
-    })
     .action(async (tokenIdArg?: string) => {
-      const tokenId = await resolveTokenId(tokenIdArg);
+      const hasWallet = !!config.privateKey && !!account;
+      const hasRpc = config.useX402 || !!config.rpcUrl;
+
+      if (!hasWallet || !hasRpc) {
+        ui.warn("Mining prerequisites are missing — launching guided start flow.");
+        await runStartFlow();
+        return;
+      }
+
+      const miningAccount = account!;
+      let tokenId: bigint;
+      if (tokenIdArg) {
+        await runPreflight("mining");
+        tokenId = parseTokenId(tokenIdArg);
+      } else {
+        const miners = await detectMiners(miningAccount.address);
+        if (miners.length === 0) {
+          ui.warn("No mining rigs found — launching guided start flow.");
+          await runStartFlow();
+          return;
+        }
+        await runPreflight("mining");
+        tokenId = selectBestMiner(miners).tokenId;
+        if (miners.length === 1) {
+          console.log(`  Using miner #${tokenId} (${miners[0].rarityLabel}, ${formatHashpower(miners[0].hashpower)})`);
+        } else {
+          const best = miners.find((m) => m.tokenId === tokenId)!;
+          console.log(`  Found ${miners.length} miners — using #${best.tokenId} (${best.rarityLabel}, ${formatHashpower(best.hashpower)})`);
+          for (const m of miners) {
+            const marker = m.tokenId === tokenId ? ui.green(" *") : "  ";
+            console.log(`  ${marker} #${m.tokenId} — ${m.rarityLabel} (${formatHashpower(m.hashpower)})`);
+          }
+        }
+      }
       await startMining(tokenId);
     });
 
@@ -571,9 +616,16 @@ async function main(): Promise<void> {
       console.log(`  ${ui.yellow("  it will be displayed. Anyone with this key")}`);
       console.log(`  ${ui.yellow("  controls your funds.")}`);
       console.log("");
-      const keyPath = saveKeyFile(acct.address, key);
-      console.log(`  ${ui.dim(`Key saved to: ${keyPath}`)}`);
-      console.log(`  ${ui.yellow("Back up this file securely, then delete it.")}`);
+      const artifacts = await saveWalletArtifacts(acct.address, key);
+      if (artifacts.plaintextPath) {
+        console.log(`  ${ui.dim(`Import helper saved to: ${artifacts.plaintextPath}`)}`);
+        console.log(`  ${ui.yellow("This plaintext file is easy to import, but less secure than an encrypted keystore.")}`);
+      }
+      if (artifacts.keystorePath) {
+        console.log(`  ${ui.dim(`Encrypted keystore saved to: ${artifacts.keystorePath}`)}`);
+      } else {
+        console.log(`  ${ui.dim("Tip: set KEYSTORE_PASSWORD or rerun wallet export to create an encrypted JSON keystore backup.")}`);
+      }
       console.log("");
       console.log(`  ${ui.dim("Import into Phantom, MetaMask, or any EVM wallet")}`);
       console.log(`  ${ui.dim("to view your AGENT tokens and Mining Rig NFT.")}`);
@@ -613,17 +665,17 @@ async function main(): Promise<void> {
       console.log(`  Private Key: ${config.privateKey}`);
       console.log("");
 
-      const filename = `wallet-${account.address}.txt`;
-      const filepath = join(process.cwd(), filename);
-      if (!existsSync(filepath)) {
-        const save = await ui.confirm("Save to file?");
-        if (save) {
-          const keyPath = saveKeyFile(account.address, config.privateKey);
-          console.log(`  ${ui.dim(`Saved to: ${keyPath}`)}`);
-          console.log(`  ${ui.yellow("Back up this file securely, then delete it.")}`);
-          console.log("");
-        }
+      const savePlaintext = await ui.confirm("Save plaintext import helper?");
+      const artifacts = await saveWalletArtifacts(account.address, config.privateKey, {
+        createPlaintextImportFile: savePlaintext,
+      });
+      if (artifacts.plaintextPath) {
+        console.log(`  ${ui.dim(`Saved import helper: ${artifacts.plaintextPath}`)}`);
       }
+      if (artifacts.keystorePath) {
+        console.log(`  ${ui.dim(`Saved encrypted keystore: ${artifacts.keystorePath}`)}`);
+      }
+      console.log("");
     });
 
   walletCmd
@@ -631,10 +683,18 @@ async function main(): Promise<void> {
     .description("Send ETH from your wallet to another address")
     .argument("<address>", "Destination address (0x-prefixed)")
     .argument("[amount]", "ETH amount to send (default: mint price + 0.003 ETH gas buffer)")
-    .hook("preAction", async () => {
-      await runPreflight("wallet");
-    })
     .action(async (address: string, amountArg?: string) => {
+      if (!config.privateKey || !account) {
+        ui.warn("No wallet configured — launching setup first.");
+        await setupWizard();
+        reloadConfig();
+        reinitClients();
+        if (!account) {
+          ui.error("Wallet configuration did not complete.");
+          return;
+        }
+      }
+
       if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
         ui.error("Invalid address format. Must be 0x + 40 hex characters.");
         return;
@@ -674,9 +734,11 @@ async function main(): Promise<void> {
       ]);
       console.log("");
 
-      if (senderBalance < amount) {
+      const requiredBalance = amount + TRANSFER_GAS_RESERVE_ETH;
+      if (senderBalance < requiredBalance) {
         ui.error("Insufficient ETH balance.");
-        ui.hint(`Need ${formatEther(amount)} ETH, have ${Number(formatEther(senderBalance)).toFixed(6)} ETH`);
+        ui.hint(`Need ${formatEther(amount)} ETH for the transfer plus ~${formatEther(TRANSFER_GAS_RESERVE_ETH)} ETH for send gas.`);
+        ui.hint(`Have ${Number(formatEther(senderBalance)).toFixed(6)} ETH in the sender wallet.`);
         return;
       }
 
@@ -807,14 +869,14 @@ async function main(): Promise<void> {
 
   dashboardCmd
     .command("scan [dir]")
-    .description("Auto-detect wallets from wallet-0x*.txt files in a directory")
+    .description("Auto-detect wallets from wallet-0x*.txt or wallet-0x*.json files in a directory")
     .action((dir?: string) => {
       const scanDir = dir ?? process.cwd();
       const { addresses, newCount } = detectWallets(scanDir);
       console.log("");
       if (addresses.length === 0) {
         console.log(`  No wallets found in ${scanDir}`);
-        console.log(`  ${ui.dim("Expected files named wallet-0x<address>.txt")}`);
+        console.log(`  ${ui.dim("Expected files named wallet-0x<address>.txt or wallet-0x<address>.json")}`);
       } else {
         console.log(`  ${ui.bold("Detected Wallets")} (${newCount} new, ${addresses.length} total)`);
         console.log("");
@@ -873,26 +935,26 @@ function detectWallets(scanDir: string): { addresses: string[]; newCount: number
   const seen = new Set(existing.map((a) => a.toLowerCase()));
   const detected: string[] = [];
 
-  // Scan scanDir for wallet-0x*.txt files
+  // Scan scanDir for wallet-0x*.txt / .json files
   try {
     const entries = readdirSync(scanDir, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isFile()) {
-        const match = entry.name.match(/^wallet-(0x[0-9a-fA-F]{40})\.txt$/);
-        if (match && !seen.has(match[1].toLowerCase())) {
-          detected.push(match[1]);
-          seen.add(match[1].toLowerCase());
+        const address = detectWalletAddressFromFilename(entry.name);
+        if (address && !seen.has(address.toLowerCase())) {
+          detected.push(address);
+          seen.add(address.toLowerCase());
         }
       }
-      // Scan rig*/wallet-0x*.txt subdirectories
+      // Scan rig*/wallet-0x* subdirectories
       if (entry.isDirectory() && entry.name.startsWith("rig")) {
         try {
           const rigFiles = readdirSync(join(scanDir, entry.name));
           for (const file of rigFiles) {
-            const m = file.match(/^wallet-(0x[0-9a-fA-F]{40})\.txt$/);
-            if (m && !seen.has(m[1].toLowerCase())) {
-              detected.push(m[1]);
-              seen.add(m[1].toLowerCase());
+            const address = detectWalletAddressFromFilename(file);
+            if (address && !seen.has(address.toLowerCase())) {
+              detected.push(address);
+              seen.add(address.toLowerCase());
             }
           }
         } catch {

@@ -26,16 +26,17 @@ export async function detectMinersWithClient(client: PublicClient, owner: Addres
     return [];
   }
 
-  const miners: OwnedMiner[] = [];
-
-  for (let i = 0n; i < balance; i++) {
-    const tokenId = (await client.readContract({
+  const indexes = Array.from({ length: Number(balance) }, (_, i) => BigInt(i));
+  const tokenIds = await Promise.all(indexes.map((index) =>
+    client.readContract({
       address: config.miningAgentAddress,
       abi: miningAgentAbi,
       functionName: "tokenOfOwnerByIndex",
-      args: [owner, i],
-    })) as bigint;
+      args: [owner, index],
+    }) as Promise<bigint>,
+  ));
 
+  const miners = await Promise.all(tokenIds.map(async (tokenId) => {
     const [rarityRaw, hashpowerRaw] = await Promise.all([
       client.readContract({
         address: config.miningAgentAddress,
@@ -52,13 +53,13 @@ export async function detectMinersWithClient(client: PublicClient, owner: Addres
     ]);
 
     const rarity = Number(rarityRaw);
-    miners.push({
+    return {
       tokenId,
       rarity,
       rarityLabel: rarityLabels[rarity] ?? `Tier ${rarity}`,
       hashpower: Number(hashpowerRaw),
-    });
-  }
+    };
+  }));
 
   return miners;
 }

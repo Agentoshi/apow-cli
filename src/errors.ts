@@ -118,11 +118,11 @@ const patterns: Array<{
     }),
   },
   {
-    test: (m) => m.toLowerCase().includes("insufficient funds"),
+    test: (m) => m.includes("Not enough ETH for gas") || m.toLowerCase().includes("insufficient funds"),
     classify: () => ({
       category: "setup",
       userMessage: "Not enough ETH for gas",
-      recovery: "Send ETH to your wallet on Base",
+      recovery: "Send ETH to your wallet on Base, or run `apow fund` to top up gas before mining again",
     }),
   },
   {

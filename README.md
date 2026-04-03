@@ -83,16 +83,16 @@ If you want to control each step manually, the older `setup -> fund -> mint -> m
 | `apow start` | Guided happy path: setup -> fund -> mint -> mine |
 | `apow setup` | Agent-first setup wizard: Easy Mode (x402 everywhere) or Advanced Mode |
 | `apow fund` | Fund your wallet: bridge from Solana/Ethereum or send on Base, auto-split ETH+USDC |
-| `apow wallet new` | Generate a new mining wallet |
+| `apow wallet new` | Generate a new mining wallet, plus optional encrypted JSON keystore backup |
 | `apow wallet show` | Show configured wallet address |
-| `apow wallet export` | Export your wallet's private key |
+| `apow wallet export` | Export your wallet's private key and optional backups |
 | `apow wallet fund <addr> [eth]` | Send ETH to another address (default: mint price + gas) |
 | `apow mint` | Mint a MiningAgent NFT (one per wallet) |
 | `apow mine [tokenId]` | Mine $AGENT with your NFT (auto-detects best rig) |
 | `apow stats [tokenId]` | View mining stats, earnings, difficulty |
 | `apow dashboard start` | Launch multi-wallet mining dashboard |
 | `apow dashboard add <addr>` | Add a wallet to the dashboard |
-| `apow dashboard scan [dir]` | Auto-detect wallet files in a directory |
+| `apow dashboard scan [dir]` | Auto-detect `wallet-0x*.txt` and `wallet-0x*.json` files in a directory |
 
 ## Configuration
 
@@ -107,6 +107,7 @@ ALLOW_LOCAL_FALLBACK_WITH_X402=false  # Easy Mode default: do not burn local CPU
 # LLM_PROVIDER=clawrouter     # clawrouter (auto with x402) | openai | gemini | deepseek | qwen | anthropic | ollama (for minting)
 # LLM_MODEL=blockrun/eco      # Auto-detected per provider; override only if needed
 # LLM_API_KEY=sk-...          # Not needed with clawrouter/ollama; required for openai/gemini/etc.
+# KEYSTORE_PASSWORD=...       # Optional: create encrypted wallet JSON backups during wallet new/export
 # Bridging (only for `apow fund`)
 # SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
 # ETHEREUM_RPC_URL=https://cloudflare-eth.com
@@ -219,7 +220,7 @@ Monitor your entire mining fleet from a single web UI. Zero external dependencie
 
 ```bash
 # Quick start: scan wallet files and launch
-apow dashboard scan .          # detect wallet-0x*.txt files in current directory
+apow dashboard scan .          # detect wallet-0x*.txt / .json files in current directory
 apow dashboard start           # open dashboard at http://localhost:3847
 ```
 
@@ -230,7 +231,7 @@ apow dashboard start           # open dashboard at http://localhost:3847
 | `apow dashboard start` | Launch dashboard web UI (default port 3847) |
 | `apow dashboard add <addr>` | Add a wallet address to monitor |
 | `apow dashboard remove <addr>` | Remove a wallet from monitoring |
-| `apow dashboard scan [dir]` | Auto-detect wallets from `wallet-0x*.txt` files |
+| `apow dashboard scan [dir]` | Auto-detect wallets from `wallet-0x*.txt` and `wallet-0x*.json` files |
 | `apow dashboard wallets` | List all monitored wallets |
 
 ### Fleet Configuration
@@ -245,7 +246,7 @@ Wallets are stored in `~/.apow/wallets.json` (plain JSON array of addresses). Fo
 ]
 ```
 
-Fleet types: `array` (JSON array of addresses), `solkek` (master/miners JSON), `rigdirs` (scan `rig*/wallet-0x*.txt`), `walletfiles` (scan `wallet-0x*.txt`).
+Fleet types: `array` (JSON array of addresses), `solkek` (master/miners JSON), `rigdirs` (scan `rig*/wallet-0x*.txt` / `.json`), `walletfiles` (scan `wallet-0x*.txt` / `.json`).
 
 ## Protocol
 

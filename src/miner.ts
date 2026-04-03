@@ -1,5 +1,5 @@
 import type { Abi } from "viem";
-import { encodePacked, formatEther, keccak256 } from "viem";
+import { encodePacked, formatEther, keccak256, parseEther } from "viem";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -25,6 +25,10 @@ const miningAgentAbi = miningAgentAbiJson as Abi;
 const MAX_CONSECUTIVE_FAILURES = 10;
 const RETRY_DELAY_MS = 2_000;
 const RETRY_JITTER_MS = 500;
+const MAX_MINE_GAS_UNITS = 400_000n;
+const MIN_MINE_GAS_RESERVE_WEI = parseEther("0.0002");
+const MINE_GAS_RESERVE_CACHE_MS = 30_000;
+const NEXT_BLOCK_POLL_MS = 1_500;
 
 const BASE_REWARD = 3n * 10n ** 18n;
 const REWARD_DECAY_NUM = 90n;
@@ -78,6 +82,25 @@ function retryDelayMs(): number {
   return RETRY_DELAY_MS + Math.random() * RETRY_JITTER_MS;
 }
 
+let cachedMineGasReserve: { value: bigint; expiresAt: number } | null = null;
+
+async function estimateMineGasReserve(): Promise<bigint> {
+  if (cachedMineGasReserve && cachedMineGasReserve.expiresAt > Date.now()) {
+    return cachedMineGasReserve.value;
+  }
+
+  try {
+    const fees = await publicClient.estimateFeesPerGas();
+    const feePerGas = fees.maxFeePerGas ?? fees.gasPrice ?? 0n;
+    const estimated = (feePerGas * MAX_MINE_GAS_UNITS * 3n) / 2n;
+    const value = estimated > MIN_MINE_GAS_RESERVE_WEI ? estimated : MIN_MINE_GAS_RESERVE_WEI;
+    cachedMineGasReserve = { value, expiresAt: Date.now() + MINE_GAS_RESERVE_CACHE_MS };
+    return value;
+  } catch {
+    return MIN_MINE_GAS_RESERVE_WEI;
+  }
+}
+
 function estimateReward(totalMines: bigint, eraInterval: bigint, hashpower: bigint): bigint {
   const era = totalMines / eraInterval;
   let reward = BASE_REWARD;
@@ -102,7 +125,7 @@ async function waitForNextBlock(lastMineBlock: bigint): Promise<void> {
     if (currentBlock > lastMineBlock) {
       return;
     }
-    await sleep(500);
+    await sleep(NEXT_BLOCK_POLL_MS);
   }
   throw new Error("Timed out waiting for next block (60s)");
 }
@@ -234,7 +257,13 @@ async function grindNonce(
   }
 }
 
-async function showStartupBanner(tokenId: bigint): Promise<void> {
+interface StartupContext {
+  mineableSupply: bigint;
+  eraInterval: bigint;
+  hashpower: bigint;
+}
+
+async function showStartupBanner(tokenId: bigint): Promise<StartupContext> {
   const { account } = requireWallet();
 
   const [ethBalance, totalMines, totalMinted, mineableSupply, eraInterval, hashpowerRaw, rarityRaw] =
@@ -290,6 +319,12 @@ async function showStartupBanner(tokenId: bigint): Promise<void> {
     ["Supply", `${supplyPct.toFixed(2)}% mined (${Number(formatEther(totalMinted)).toLocaleString()} / ${Number(formatEther(mineableSupply)).toLocaleString()} AGENT)`],
   ]);
   console.log("");
+
+  return {
+    mineableSupply,
+    eraInterval,
+    hashpower: hashpowerRaw,
+  };
 }
 
 export async function startMining(tokenId: bigint): Promise<void> {
@@ -333,7 +368,20 @@ export async function startMining(tokenId: bigint): Promise<void> {
   if (labelParts.length === 0) labelParts.push(`JS (${config.minerThreads} threads)`);
   let modeLabel = labelParts.join(" + ");
 
-  await showStartupBanner(tokenId);
+  const owner = (await publicClient.readContract({
+    address: config.miningAgentAddress,
+    abi: miningAgentAbi,
+    functionName: "ownerOf",
+    args: [tokenId],
+  })) as `0x${string}`;
+
+  if (owner.toLowerCase() !== account.address.toLowerCase()) {
+    ui.error(`Miner #${tokenId} is owned by ${owner}, not your wallet.`);
+    ui.hint("Check token ID or verify ownership on Basescan");
+    return;
+  }
+
+  const startup = await showStartupBanner(tokenId);
   console.log(`  Grinder: ${ui.bold(modeLabel)}`);
 
   // Difficulty-aware preflight gate
@@ -386,22 +434,8 @@ export async function startMining(tokenId: bigint): Promise<void> {
 
   while (true) {
     try {
-      // Pre-flight ownership check
-      const owner = (await publicClient.readContract({
-        address: config.miningAgentAddress,
-        abi: miningAgentAbi,
-        functionName: "ownerOf",
-        args: [tokenId],
-      })) as `0x${string}`;
-
-      if (owner.toLowerCase() !== account.address.toLowerCase()) {
-        ui.error(`Miner #${tokenId} is owned by ${owner}, not your wallet.`);
-        ui.hint("Check token ID or verify ownership on Basescan");
-        return;
-      }
-
-      // Supply exhaustion pre-check
-      const [totalMines, totalMinted, mineableSupply, eraInterval, hashpower] = await Promise.all([
+      // Supply exhaustion + gas readiness pre-check
+      const [totalMines, totalMinted, ethBalance, mineGasReserve] = await Promise.all([
         publicClient.readContract({
           address: config.agentCoinAddress,
           abi: agentCoinAbi,
@@ -412,33 +446,23 @@ export async function startMining(tokenId: bigint): Promise<void> {
           abi: agentCoinAbi,
           functionName: "totalMinted",
         }) as Promise<bigint>,
-        publicClient.readContract({
-          address: config.agentCoinAddress,
-          abi: agentCoinAbi,
-          functionName: "MINEABLE_SUPPLY",
-        }) as Promise<bigint>,
-        publicClient.readContract({
-          address: config.agentCoinAddress,
-          abi: agentCoinAbi,
-          functionName: "ERA_INTERVAL",
-        }) as Promise<bigint>,
-        publicClient.readContract({
-          address: config.miningAgentAddress,
-          abi: miningAgentAbi,
-          functionName: "hashpower",
-          args: [tokenId],
-        }) as Promise<bigint>,
+        getEthBalance(),
+        estimateMineGasReserve(),
       ]);
 
-      const estimatedReward = estimateReward(totalMines, eraInterval, BigInt(hashpower));
-      if (totalMinted + estimatedReward > mineableSupply) {
-        ui.error(`Supply nearly exhausted. Remaining: ${formatEther(mineableSupply - totalMinted)} AGENT.`);
+      if (ethBalance < mineGasReserve) {
+        throw new Error(`Not enough ETH for gas (have ${formatEther(ethBalance)} ETH, need ~${formatEther(mineGasReserve)} ETH)`);
+      }
+
+      const estimatedReward = estimateReward(totalMines, startup.eraInterval, startup.hashpower);
+      if (totalMinted + estimatedReward > startup.mineableSupply) {
+        ui.error(`Supply nearly exhausted. Remaining: ${formatEther(startup.mineableSupply - totalMinted)} AGENT.`);
         return;
       }
 
       // Era transition alert
-      const currentEra = totalMines / eraInterval;
-      const minesUntilNextEra = eraInterval - (totalMines % eraInterval);
+      const currentEra = totalMines / startup.eraInterval;
+      const minesUntilNextEra = startup.eraInterval - (totalMines % startup.eraInterval);
       if (minesUntilNextEra <= 10n) {
         ui.warn(`Era transition in ${minesUntilNextEra} mines! Reward will decrease.`);
       }

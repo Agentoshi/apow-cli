@@ -1,5 +1,6 @@
 import { config as loadEnv } from "dotenv";
-import { writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
 import type { Address, Chain, Hex } from "viem";
@@ -203,10 +204,34 @@ export function isExpensiveModel(model: string): boolean {
 }
 
 export async function writeEnvFile(values: Record<string, string>): Promise<void> {
-  const lines = Object.entries(values)
-    .map(([key, value]) => `${key}=${value}`)
-    .join("\n");
-  await writeFile(join(process.cwd(), ".env"), lines + "\n", "utf8");
+  const envPath = join(process.cwd(), ".env");
+  const preserved: string[] = [];
+
+  if (existsSync(envPath)) {
+    const existingContent = await readFile(envPath, "utf8").catch(() => "");
+    const seenKeys = new Set(Object.keys(values));
+    for (const line of existingContent.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) {
+        continue;
+      }
+      const eq = line.indexOf("=");
+      if (eq === -1) {
+        preserved.push(line);
+        continue;
+      }
+      const key = line.slice(0, eq).trim();
+      if (!seenKeys.has(key)) {
+        preserved.push(line);
+      }
+    }
+  }
+
+  const lines = [
+    ...preserved,
+    ...Object.entries(values).map(([key, value]) => `${key}=${value}`),
+  ].join("\n");
+  await writeFile(envPath, lines + "\n", "utf8");
   for (const [key, value] of Object.entries(values)) {
     process.env[key] = value;
   }

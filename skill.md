@@ -134,7 +134,7 @@ Or generate one directly (useful for agents, no prompts):
 npx apow-cli wallet new
 ```
 
-This outputs a private key (0x + 64 hex chars) and Base address, and saves a `wallet-<address>.txt` file to the current directory. The private key goes in your `.env` as `PRIVATE_KEY`.
+This outputs a private key (0x + 64 hex chars) and Base address, saves a plaintext `wallet-<address>.txt` import helper to the current directory, and can also create an encrypted `wallet-<address>.json` keystore under `~/.apow/keystores/` when a password is available. The private key goes in your `.env` as `PRIVATE_KEY`.
 
 **Exporting an existing wallet:** If you've already set up a wallet and need to retrieve the key:
 
@@ -142,7 +142,7 @@ This outputs a private key (0x + 64 hex chars) and Base address, and saves a `wa
 npx apow-cli wallet export
 ```
 
-This prompts for confirmation, then displays your address and private key. It also offers to save a `wallet-<address>.txt` file if one doesn't already exist.
+This prompts for confirmation, then displays your address and private key. It can save a plaintext `wallet-<address>.txt` import helper and/or an encrypted JSON keystore backup.
 
 **Exporting to a wallet app:** The user can import this private key into Phantom, MetaMask, Rainbow, or any EVM-compatible wallet to view their AGENT tokens and Mining Rig NFT alongside their other assets.
 
@@ -263,6 +263,7 @@ CHAIN=base
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `PRIVATE_KEY` | Yes | - | Wallet private key (0x + 64 hex chars) |
+| `KEYSTORE_PASSWORD` | No | unset | If set, `wallet new`/`wallet export` also create an encrypted JSON keystore backup under `~/.apow/keystores/` |
 | `MINING_AGENT_ADDRESS` | Yes | - | Deployed MiningAgent contract address |
 | `AGENT_COIN_ADDRESS` | Yes | - | Deployed AgentCoin contract address |
 | `LLM_PROVIDER` | For minting | `clawrouter` if `USE_X402=true`, else `openai` | LLM provider for minting: `clawrouter` (recommended, zero credentials), `openai`, `gemini`, `deepseek`, `qwen`, `anthropic`, `ollama`, `claude-code`, `codex`. Not needed for mining. |
@@ -650,7 +651,7 @@ This section addresses the security model of apow-cli head-on. Every claim below
 
 ### Private Key Generation (Local Only)
 
-Keys are generated via `viem/accounts` `generatePrivateKey()`, which uses Node.js `crypto.randomBytes(32)`, a cryptographically secure random number generator. Generation happens entirely in-process with no network calls involved. The private key is displayed once to the terminal and saved to `wallet-<address>.txt` with file permissions `0o600` (owner-read-write only).
+Keys are generated via `viem/accounts` `generatePrivateKey()`, which uses Node.js `crypto.randomBytes(32)`, a cryptographically secure random number generator. Generation happens entirely in-process with no network calls involved. The private key is displayed once to the terminal, and the CLI can create both a plaintext `wallet-<address>.txt` import helper and a password-protected JSON keystore (`Web3 Secret Storage v3`) with file permissions `0o600`.
 
 ### Private Key Is NEVER Transmitted
 
@@ -698,7 +699,7 @@ The SMHL solver sends only generic word-generation prompts to the LLM (e.g., "Wr
 
 1. **Use a fresh wallet.** Generate one with `npx apow-cli wallet new`. Do not import your main wallet or any wallet holding significant funds.
 2. **Fund with only what you need.** ~0.005 ETH covers minting + several mining cycles.
-3. **Wallet backups are created automatically** at `wallet-<address>.txt` with restricted file permissions (`0o600`).
+3. **Prefer encrypted keystore backups** in `~/.apow/keystores/wallet-<address>.json`. The plaintext `wallet-<address>.txt` helper is convenient for importing into wallet UIs, but it is less secure.
 4. **Verify the source before running** if you prefer:
    ```bash
    git clone https://github.com/Agentoshi/apow-cli
@@ -769,7 +770,7 @@ The `apow dashboard` command group provides a real-time web UI for monitoring yo
 | `apow dashboard start` | Launch the dashboard web UI at `http://localhost:3847`. Auto-opens browser. Press Ctrl+C to stop. |
 | `apow dashboard add <address>` | Add a wallet address to monitor. Validates 0x + 40 hex chars. |
 | `apow dashboard remove <address>` | Remove a wallet address from monitoring. |
-| `apow dashboard scan [dir]` | Auto-detect wallets from `wallet-0x*.txt` files in the given directory (default: CWD). Also scans `rig*/` subdirectories. |
+| `apow dashboard scan [dir]` | Auto-detect wallets from `wallet-0x*.txt` and `wallet-0x*.json` files in the given directory (default: CWD). Also scans `rig*/` subdirectories. |
 | `apow dashboard wallets` | List all currently monitored wallet addresses. |
 
 ### How It Works
@@ -779,7 +780,7 @@ The `apow dashboard` command group provides a real-time web UI for monitoring yo
 - **Data fetching:** Chunked RPC multicalls (max 30 per batch) with a 25-second TTL cache. Queries ETH balance, AGENT balance, rig ownership, rarity, hashpower, mine count, and earnings for every wallet.
 - **NFT art:** Renders on-chain SVG art for each Mining Rig with rarity-based color coding.
 - **Auto-seed:** On first run, seeds `wallets.json` with the address from your `.env` if configured.
-- **Auto-detect:** `dashboard start` automatically scans CWD for `wallet-0x*.txt` files before launching.
+- **Auto-detect:** `dashboard start` automatically scans CWD for `wallet-0x*.txt` and `wallet-0x*.json` files before launching.
 
 ### Fleet Configuration (`~/.apow/fleets.json`)
 
@@ -800,8 +801,8 @@ For managing wallets across multiple machines or directories, create `~/.apow/fl
 |------|--------------|-------------|
 | `array` | JSON array of addresses | Simple list: `["0xABC...", "0xDEF..."]` |
 | `solkek` | JSON with `master.address` + `miners[].address` | Solkek fleet manager format |
-| `rigdirs` | Directory containing `rig*/wallet-0x*.txt` | Scan rig subdirectories for wallet files |
-| `walletfiles` | Directory containing `wallet-0x*.txt` | Scan flat directory for wallet files |
+| `rigdirs` | Directory containing `rig*/wallet-0x*.txt` or `.json` | Scan rig subdirectories for wallet files |
+| `walletfiles` | Directory containing `wallet-0x*.txt` or `.json` | Scan flat directory for wallet files |
 
 If `fleets.json` does not exist, the dashboard falls back to `wallets.json` as a single "Main" fleet.
 

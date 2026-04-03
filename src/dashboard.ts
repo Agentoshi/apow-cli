@@ -5,6 +5,7 @@ import { createPublicClient, formatEther, http as viemHttp, type Abi, type Addre
 import { base } from "viem/chains";
 import { getDashboardHtml } from "./dashboard-html";
 import { createX402Transport } from "./x402";
+import { detectWalletAddressFromFilename } from "./wallet-store";
 
 import AgentCoinAbiJson from "./abi/AgentCoin.json";
 import MiningAgentAbiJson from "./abi/MiningAgent.json";
@@ -96,9 +97,9 @@ function extractRigdirs(dir: string): Address[] {
     if (!entry.isDirectory() || !entry.name.startsWith("rig")) continue;
     const rigFiles = readdirSync(join(dir, entry.name));
     for (const file of rigFiles) {
-      const match = file.match(/^wallet-(0x[0-9a-fA-F]{40})\.txt$/);
-      if (match && isAddress(match[1])) {
-        addrs.push(match[1] as Address);
+      const address = detectWalletAddressFromFilename(file);
+      if (address && isAddress(address)) {
+        addrs.push(address as Address);
       }
     }
   }
@@ -109,9 +110,9 @@ function extractWalletfiles(dir: string): Address[] {
   const addrs: Address[] = [];
   const files = readdirSync(dir);
   for (const file of files) {
-    const match = file.match(/^wallet-(0x[0-9a-fA-F]{40})\.txt$/);
-    if (match && isAddress(match[1])) {
-      addrs.push(match[1] as Address);
+    const address = detectWalletAddressFromFilename(file);
+    if (address && isAddress(address)) {
+      addrs.push(address as Address);
     }
   }
   return addrs;
