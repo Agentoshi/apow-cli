@@ -4,7 +4,7 @@ import { formatEther, hexToBytes, parseEther } from "viem";
 import miningAgentAbiJson from "./abi/MiningAgent.json";
 import { config } from "./config";
 import { txUrl, tokenUrl } from "./explorer";
-import { normalizeSmhlChallenge, solveSmhlChallenge, type SmhlChallenge } from "./smhl";
+import { normalizeSmhlChallenge, solveSmhlAlgorithmic, type SmhlChallenge, validateSmhlSolution } from "./smhl";
 import { formatHashpower, rarityLabels } from "./detect";
 import { startMining } from "./miner";
 import * as ui from "./ui";
@@ -163,9 +163,12 @@ export async function runMintFlow(options: MintFlowOptions = {}): Promise<bigint
   // Solve SMHL
   const challenge = deriveChallengeFromSeed(challengeSeed);
   const smhlSpinner = ui.spinner("Solving SMHL...");
-  const solution = await solveSmhlChallenge(challenge, (attempt) => {
-    smhlSpinner.update(`Solving SMHL... attempt ${attempt}/5`);
-  });
+  const solution = solveSmhlAlgorithmic(challenge);
+  const issues = validateSmhlSolution(solution, challenge);
+  if (issues.length > 0) {
+    smhlSpinner.fail("Solving SMHL failed");
+    throw new Error(`SMHL generation failed: ${issues.join(", ")}`);
+  }
   smhlSpinner.stop("Solving SMHL... done");
 
   // Mint
