@@ -1,7 +1,7 @@
 import { exec, execFile } from "node:child_process";
 import OpenAI from "openai";
 
-import { config, requireLlmApiKey } from "./config";
+import { config, requireLlmApiKey, resolveDefaultModel, type LlmProvider } from "./config";
 
 export interface SmhlChallenge {
   targetAsciiSum: number;
@@ -177,10 +177,10 @@ function sanitizeResponse(text: string): string {
   return cleaned;
 }
 
-async function requestOpenAiSolution(prompt: string): Promise<string> {
+async function requestOpenAiSolutionForModel(prompt: string, model: string): Promise<string> {
   const client = new OpenAI({ apiKey: requireLlmApiKey() });
   const response = await client.chat.completions.create({
-    model: config.llmModel,
+    model,
     temperature: 0.7,
     messages: [
       {
@@ -195,7 +195,7 @@ async function requestOpenAiSolution(prompt: string): Promise<string> {
   return response.choices[0]?.message.content ?? "";
 }
 
-async function requestAnthropicSolution(prompt: string): Promise<string> {
+async function requestAnthropicSolutionForModel(prompt: string, model: string): Promise<string> {
   const response = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     signal: AbortSignal.timeout(15_000),
@@ -205,7 +205,7 @@ async function requestAnthropicSolution(prompt: string): Promise<string> {
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: config.llmModel,
+      model,
       max_tokens: 200,
       temperature: 0.7,
       system:
@@ -218,7 +218,7 @@ async function requestAnthropicSolution(prompt: string): Promise<string> {
     const retryAfter = response.headers.get("retry-after");
     const waitMs = retryAfter ? parseInt(retryAfter) * 1000 : 5000;
     await new Promise((r) => setTimeout(r, waitMs));
-    throw new Error(`Rate limited by Anthropic — retrying`);
+    throw new Error("Rate limited by Anthropic — retrying");
   }
 
   if (!response.ok) {
@@ -232,13 +232,13 @@ async function requestAnthropicSolution(prompt: string): Promise<string> {
   return data.content?.find((item) => item.type === "text")?.text ?? "";
 }
 
-async function requestOllamaSolution(prompt: string): Promise<string> {
+async function requestOllamaSolutionForModel(prompt: string, model: string): Promise<string> {
   const response = await fetch(`${config.ollamaUrl}/api/generate`, {
     method: "POST",
     signal: AbortSignal.timeout(15_000),
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
-      model: config.llmModel,
+      model,
       prompt: [
         "You generate short lowercase word sequences that match exact constraints.",
         "Return only the words separated by spaces. Nothing else.",
@@ -254,7 +254,7 @@ async function requestOllamaSolution(prompt: string): Promise<string> {
     const retryAfter = response.headers.get("retry-after");
     const waitMs = retryAfter ? parseInt(retryAfter) * 1000 : 5000;
     await new Promise((r) => setTimeout(r, waitMs));
-    throw new Error(`Rate limited by Ollama — retrying`);
+    throw new Error("Rate limited by Ollama — retrying");
   }
 
   if (!response.ok) {
@@ -265,8 +265,7 @@ async function requestOllamaSolution(prompt: string): Promise<string> {
   return data.response ?? "";
 }
 
-async function requestGeminiSolution(prompt: string): Promise<string> {
-  const model = config.llmModel || "gemini-2.5-flash";
+async function requestGeminiSolutionForModel(prompt: string, model: string): Promise<string> {
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${requireLlmApiKey()}`,
     {
@@ -287,7 +286,7 @@ async function requestGeminiSolution(prompt: string): Promise<string> {
     const retryAfter = response.headers.get("retry-after");
     const waitMs = retryAfter ? parseInt(retryAfter) * 1000 : 5000;
     await new Promise((r) => setTimeout(r, waitMs));
-    throw new Error(`Rate limited by Gemini — retrying`);
+    throw new Error("Rate limited by Gemini — retrying");
   }
 
   if (!response.ok) {
@@ -301,13 +300,13 @@ async function requestGeminiSolution(prompt: string): Promise<string> {
   return data.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
 }
 
-async function requestDeepSeekSolution(prompt: string): Promise<string> {
+async function requestDeepSeekSolutionForModel(prompt: string, model: string): Promise<string> {
   const client = new OpenAI({
     apiKey: requireLlmApiKey(),
     baseURL: "https://api.deepseek.com",
   });
   const response = await client.chat.completions.create({
-    model: config.llmModel || "deepseek-chat",
+    model,
     temperature: 0.7,
     messages: [
       {
@@ -322,13 +321,13 @@ async function requestDeepSeekSolution(prompt: string): Promise<string> {
   return response.choices[0]?.message.content ?? "";
 }
 
-async function requestQwenSolution(prompt: string): Promise<string> {
+async function requestQwenSolutionForModel(prompt: string, model: string): Promise<string> {
   const client = new OpenAI({
     apiKey: requireLlmApiKey(),
     baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
   });
   const response = await client.chat.completions.create({
-    model: config.llmModel || "qwen-plus",
+    model,
     temperature: 0.7,
     messages: [
       {
@@ -343,7 +342,7 @@ async function requestQwenSolution(prompt: string): Promise<string> {
   return response.choices[0]?.message.content ?? "";
 }
 
-async function requestClawRouterSolution(prompt: string): Promise<string> {
+async function requestClawRouterSolution(prompt: string, model: string): Promise<string> {
   const { ensureClawRouter, getClawRouterBaseUrl } = await import("./clawrouter");
   const { requirePrivateKey } = await import("./config");
 
@@ -355,7 +354,7 @@ async function requestClawRouterSolution(prompt: string): Promise<string> {
   });
 
   const response = await client.chat.completions.create({
-    model: config.llmModel || "blockrun/eco",
+    model,
     temperature: 0.7,
     messages: [
       {
@@ -387,7 +386,7 @@ async function requestCodexSolution(prompt: string): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile("codex", ["exec", prompt, "--full-auto"], { timeout: 15_000 }, (error, stdout, stderr) => {
       if (error) {
-        reject(new Error(`Codex error: ${error.message}`));
+        reject(new Error(`Codex error: ${error.message}${stderr ? `\nstderr: ${stderr}` : ""}${stdout ? `\nstdout: ${stdout}` : ""}`));
         return;
       }
       resolve(stdout.trim());
@@ -395,27 +394,59 @@ async function requestCodexSolution(prompt: string): Promise<string> {
   });
 }
 
-async function requestProviderSolution(prompt: string): Promise<string> {
-  switch (config.llmProvider) {
+function resolveModelForProvider(provider: LlmProvider): string {
+  return provider === config.llmProvider ? config.llmModel : resolveDefaultModel(provider);
+}
+
+function resolveProviderOrder(): LlmProvider[] {
+  const providers: LlmProvider[] = [config.llmProvider];
+  if (config.useX402 && config.privateKey && config.llmProvider !== "clawrouter") {
+    providers.push("clawrouter");
+  }
+  return providers;
+}
+
+function describeProvider(provider: LlmProvider): string {
+  return provider === "claude-code" ? "Claude Code" : provider === "clawrouter" ? "ClawRouter" : provider;
+}
+
+function isPermanentProviderError(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return normalized.includes("request not allowed")
+    || normalized.includes("failed to authenticate")
+    || normalized.includes("country, region, or territory not supported")
+    || normalized.includes("invalid api key")
+    || normalized.includes("api key is invalid")
+    || normalized.includes("not authenticated")
+    || normalized.includes("unauthorized")
+    || normalized.includes("forbidden")
+    || normalized.includes("not logged in")
+    || normalized.includes("command not found")
+    || normalized.includes("enoent");
+}
+
+async function requestProviderSolution(provider: LlmProvider, prompt: string): Promise<string> {
+  const model = resolveModelForProvider(provider);
+  switch (provider) {
     case "anthropic":
-      return requestAnthropicSolution(prompt);
+      return requestAnthropicSolutionForModel(prompt, model);
     case "gemini":
-      return requestGeminiSolution(prompt);
+      return requestGeminiSolutionForModel(prompt, model);
     case "ollama":
-      return requestOllamaSolution(prompt);
+      return requestOllamaSolutionForModel(prompt, model);
     case "claude-code":
       return requestClaudeCodeSolution(prompt);
     case "codex":
       return requestCodexSolution(prompt);
     case "deepseek":
-      return requestDeepSeekSolution(prompt);
+      return requestDeepSeekSolutionForModel(prompt, model);
     case "qwen":
-      return requestQwenSolution(prompt);
+      return requestQwenSolutionForModel(prompt, model);
     case "clawrouter":
-      return requestClawRouterSolution(prompt);
+      return requestClawRouterSolution(prompt, model);
     case "openai":
     default:
-      return requestOpenAiSolution(prompt);
+      return requestOpenAiSolutionForModel(prompt, model);
   }
 }
 
@@ -455,29 +486,45 @@ export async function solveSmhlChallenge(
   challenge: SmhlChallenge,
   onAttempt?: (attempt: number) => void,
 ): Promise<string> {
+  const providers = resolveProviderOrder();
+  let providerIndex = 0;
   let feedback: string | undefined;
   let lastIssues = "provider did not return a valid response";
 
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     if (onAttempt) onAttempt(attempt);
 
-    try {
+    while (providerIndex < providers.length) {
+      const provider = providers[providerIndex];
       const prompt = buildSmhlPrompt(challenge, feedback);
-      const raw = await requestProviderSolution(prompt);
-      const sanitized = sanitizeResponse(raw);
-      const adjusted = adjustSolution(sanitized, challenge);
-      const issues = validateSmhlSolution(adjusted, challenge);
+      try {
+        const raw = await requestProviderSolution(provider, prompt);
+        const sanitized = sanitizeResponse(raw);
+        const adjusted = adjustSolution(sanitized, challenge);
+        const issues = validateSmhlSolution(adjusted, challenge);
 
-      if (issues.length === 0) {
-        return adjusted;
+        if (issues.length === 0) {
+          return adjusted;
+        }
+
+        feedback = issues.join(", ");
+        lastIssues = `attempt ${attempt} (${describeProvider(provider)}): ${feedback}`;
+        break;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (isPermanentProviderError(msg) && providerIndex < providers.length - 1) {
+          providerIndex += 1;
+          feedback = undefined;
+          lastIssues = `${describeProvider(provider)} unavailable: ${msg}`;
+          continue;
+        }
+        if (isPermanentProviderError(msg)) {
+          throw new Error(`SMHL solve failed with ${describeProvider(provider)}: ${msg}`);
+        }
+        feedback = msg;
+        lastIssues = `attempt ${attempt} (${describeProvider(provider)}): ${msg}`;
+        break;
       }
-
-      feedback = issues.join(", ");
-      lastIssues = `attempt ${attempt}: ${feedback}`;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      feedback = msg;
-      lastIssues = `attempt ${attempt}: ${msg}`;
     }
   }
 

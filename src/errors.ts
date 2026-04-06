@@ -70,12 +70,38 @@ const patterns: Array<{
     },
   },
   {
-    test: (m) => /\b40[13]\b/.test(m) && (m.includes("anthropic") || m.includes("openai") || m.toLowerCase().includes("unauthorized") || m.toLowerCase().includes("forbidden")),
+    test: (m) =>
+      /\b40[13]\b/.test(m)
+      && (m.includes("anthropic") || m.includes("openai") || m.toLowerCase().includes("unauthorized") || m.toLowerCase().includes("forbidden"))
+      && !m.toLowerCase().includes("codex")
+      && !m.toLowerCase().includes("claude")
+      && !m.toLowerCase().includes("clawrouter"),
     classify: () => ({
       category: "setup",
       userMessage: "LLM API key is invalid or expired",
       recovery: "Run `apow setup` to configure a valid key",
     }),
+  },
+  {
+    test: (m) =>
+      m.includes("SMHL solve failed with")
+      || m.includes("Failed to authenticate")
+      || m.includes("Request not allowed")
+      || m.includes("country, region, or territory not supported"),
+    classify: (msg) => {
+      const lower = msg.toLowerCase();
+      const provider = lower.includes("codex") ? "codex"
+        : lower.includes("claude") ? "claude-code"
+        : lower.includes("clawrouter") ? "clawrouter"
+        : "your configured LLM";
+      return {
+        category: "setup",
+        userMessage: `${provider} is not usable for minting`,
+        recovery: provider === "clawrouter"
+          ? "Check Base USDC balance and x402 connectivity, or switch to another LLM provider in `apow setup`"
+          : "Authenticate that CLI/provider, or switch to LLM_PROVIDER=clawrouter in `apow setup`",
+      };
+    },
   },
   {
     test: (m) => m.includes("x402 GPU payment failed: insufficient USDC balance"),

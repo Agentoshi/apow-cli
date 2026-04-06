@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import type { Abi, Address } from "viem";
 import { createPublicClient, formatEther, formatUnits, http, parseEther } from "viem";
 import { base } from "viem/chains";
@@ -32,6 +33,15 @@ interface CheckResult {
   label: string;
   passed: boolean;
   fix?: string;
+}
+
+function hasLocalCli(command: string): boolean {
+  try {
+    execFileSync(command, ["--version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function runPreflight(level: PreflightLevel): Promise<void> {
@@ -181,7 +191,7 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
       }
     }
 
-    // Check 5: LLM key set (only required for minting, not mining)
+    // Check 5: LLM provider readiness (required for minting only)
     if (level === "wallet") {
       if (config.llmProvider === "clawrouter") {
         if (!account) {
@@ -192,14 +202,38 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
           });
         } else {
           results.push({
-            label: `LLM provider: clawrouter (x402, same wallet as mining)`,
+            label: "LLM provider: clawrouter (x402, same wallet as mining)",
             passed: true,
           });
         }
       } else if (config.llmProvider === "ollama") {
         results.push({ label: `LLM provider: ollama (${config.ollamaUrl})`, passed: true });
-      } else if (config.llmProvider === "claude-code" || config.llmProvider === "codex") {
-        results.push({ label: `LLM provider: ${config.llmProvider} (local CLI)`, passed: true });
+      } else if (config.llmProvider === "claude-code") {
+        if (hasLocalCli("claude")) {
+          results.push({
+            label: "LLM provider: claude-code (local CLI detected; auth checked at mint time)",
+            passed: true,
+          });
+        } else {
+          results.push({
+            label: "LLM provider claude-code not installed",
+            passed: false,
+            fix: "Install the Claude CLI or switch to LLM_PROVIDER=clawrouter",
+          });
+        }
+      } else if (config.llmProvider === "codex") {
+        if (hasLocalCli("codex")) {
+          results.push({
+            label: "LLM provider: codex (local CLI detected; auth/region checked at mint time)",
+            passed: true,
+          });
+        } else {
+          results.push({
+            label: "LLM provider codex not installed",
+            passed: false,
+            fix: "Install the Codex CLI or switch to LLM_PROVIDER=clawrouter",
+          });
+        }
       } else if (config.llmApiKey) {
         results.push({ label: `LLM provider: ${config.llmProvider} (key set)`, passed: true });
       } else {

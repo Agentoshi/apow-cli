@@ -275,7 +275,7 @@ async function setupWizard(): Promise<void> {
       values.OLLAMA_URL = ollamaUrl;
       ui.ok(`Ollama at ${ollamaUrl}`);
     } else if (provider === "claude-code" || provider === "codex") {
-      ui.ok(`Using local ${provider} CLI — no API key needed`);
+      ui.ok(`Using local ${provider} CLI — make sure you're already authenticated`);
     } else {
       const apiKey = await ui.promptSecret("API key");
       if (apiKey) {
@@ -283,7 +283,7 @@ async function setupWizard(): Promise<void> {
         ui.ok(`${provider} key set`);
       } else {
         ui.fail("No API key provided");
-        ui.hint(`Set LLM_API_KEY in .env later`);
+        ui.hint("Set LLM_API_KEY in .env later");
       }
     }
 

@@ -4,7 +4,7 @@ import { formatEther, hexToBytes, parseEther } from "viem";
 import miningAgentAbiJson from "./abi/MiningAgent.json";
 import { config } from "./config";
 import { txUrl, tokenUrl } from "./explorer";
-import { normalizeSmhlChallenge, solveSmhlAlgorithmic, type SmhlChallenge, validateSmhlSolution } from "./smhl";
+import { normalizeSmhlChallenge, solveSmhlChallenge, type SmhlChallenge } from "./smhl";
 import { formatHashpower, rarityLabels } from "./detect";
 import { startMining } from "./miner";
 import * as ui from "./ui";
@@ -16,6 +16,11 @@ const MINT_GAS_RESERVE_ETH = parseEther("0.003");
 
 export interface MintFlowOptions {
   startMiningAfterMint?: boolean;
+}
+
+function isExpiredMintError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Expired");
 }
 
 function deriveChallengeFromSeed(seed: Hex): SmhlChallenge {
@@ -128,65 +133,93 @@ export async function runMintFlow(options: MintFlowOptions = {}): Promise<bigint
   }
   console.log("");
 
-  // Request challenge
-  const challengeSpinner = ui.spinner("Requesting challenge...");
-  const challengeTx = await walletClient.writeContract({
-    address: config.miningAgentAddress,
-    abi: miningAgentAbi,
-    account,
-    functionName: "getChallenge",
-    args: [account.address],
-  });
-  const challengeReceipt = await publicClient.waitForTransactionReceipt({ hash: challengeTx });
-  if (challengeReceipt.status === "reverted") {
-    throw new Error("Challenge request reverted on-chain");
-  }
-  challengeSpinner.stop("Requesting challenge... done");
+  let receipt: Awaited<ReturnType<typeof publicClient.waitForTransactionReceipt>> | null = null;
 
-  // Read challenge seed with retry (public RPC may lag behind tx confirmation)
-  let challengeSeed: Hex = ZERO_SEED;
-  for (let retry = 0; retry < 5; retry++) {
-    challengeSeed = (await publicClient.readContract({
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    // Request challenge
+    const challengeSpinner = ui.spinner(`Requesting challenge${attempt > 1 ? ` (retry ${attempt}/2)` : ""}...`);
+    const challengeTx = await walletClient.writeContract({
+      address: config.miningAgentAddress,
+      abi: miningAgentAbi,
+      account,
+      functionName: "getChallenge",
+      args: [account.address],
+    });
+    const challengeReceipt = await publicClient.waitForTransactionReceipt({ hash: challengeTx });
+    if (challengeReceipt.status === "reverted") {
+      throw new Error("Challenge request reverted on-chain");
+    }
+    challengeSpinner.stop(`Requesting challenge${attempt > 1 ? ` (retry ${attempt}/2)` : ""}... done`);
+
+    // Read the seed at the exact receipt block so we do not burn the 20s window
+    // waiting for latest-state propagation on slower RPCs.
+    let challengeSeed = (await publicClient.readContract({
       address: config.miningAgentAddress,
       abi: miningAgentAbi,
       functionName: "challengeSeeds",
       args: [account.address],
+      blockNumber: challengeReceipt.blockNumber,
     })) as Hex;
-    if (challengeSeed.toLowerCase() !== ZERO_SEED.toLowerCase()) break;
-    await new Promise((r) => setTimeout(r, 2000));
+
+    if (challengeSeed.toLowerCase() === ZERO_SEED.toLowerCase()) {
+      // Fall back to latest-state polling if the provider does not expose the
+      // just-mined storage view reliably.
+      for (let retry = 0; retry < 3; retry++) {
+        challengeSeed = (await publicClient.readContract({
+          address: config.miningAgentAddress,
+          abi: miningAgentAbi,
+          functionName: "challengeSeeds",
+          args: [account.address],
+        })) as Hex;
+        if (challengeSeed.toLowerCase() !== ZERO_SEED.toLowerCase()) break;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+
+    if (challengeSeed.toLowerCase() === ZERO_SEED.toLowerCase()) {
+      throw new Error("Challenge seed not found after confirmation. The RPC may be lagging — try again.");
+    }
+
+    // Solve SMHL
+    const challenge = deriveChallengeFromSeed(challengeSeed);
+    const smhlSpinner = ui.spinner("Solving SMHL...");
+    const solution = await solveSmhlChallenge(challenge, (smhlAttempt) => {
+      smhlSpinner.update(`Solving SMHL... attempt ${smhlAttempt}/5`);
+    });
+    smhlSpinner.stop("Solving SMHL... done");
+
+    // Mint
+    const mintSpinner = ui.spinner("Minting...");
+    try {
+      const mintTx = await walletClient.writeContract({
+        address: config.miningAgentAddress,
+        abi: miningAgentAbi,
+        account,
+        functionName: "mint",
+        args: [solution],
+        value: mintPrice,
+      });
+      mintSpinner.update("Waiting for confirmation...");
+      receipt = await publicClient.waitForTransactionReceipt({ hash: mintTx });
+      if (receipt.status === "reverted") {
+        throw new Error("Mint transaction reverted on-chain");
+      }
+      mintSpinner.stop("Minting... confirmed");
+      break;
+    } catch (error) {
+      mintSpinner.fail("Minting... failed");
+      if (isExpiredMintError(error) && attempt < 2) {
+        ui.warn("Challenge expired before mint submission. Retrying with a fresh challenge...");
+        console.log("");
+        continue;
+      }
+      throw error;
+    }
   }
 
-  if (challengeSeed.toLowerCase() === ZERO_SEED.toLowerCase()) {
-    throw new Error("Challenge seed not found after 5 retries. The RPC may be lagging — try again.");
+  if (!receipt) {
+    throw new Error("Mint failed before confirmation.");
   }
-
-  // Solve SMHL
-  const challenge = deriveChallengeFromSeed(challengeSeed);
-  const smhlSpinner = ui.spinner("Solving SMHL...");
-  const solution = solveSmhlAlgorithmic(challenge);
-  const issues = validateSmhlSolution(solution, challenge);
-  if (issues.length > 0) {
-    smhlSpinner.fail("Solving SMHL failed");
-    throw new Error(`SMHL generation failed: ${issues.join(", ")}`);
-  }
-  smhlSpinner.stop("Solving SMHL... done");
-
-  // Mint
-  const mintSpinner = ui.spinner("Minting...");
-  const mintTx = await walletClient.writeContract({
-    address: config.miningAgentAddress,
-    abi: miningAgentAbi,
-    account,
-    functionName: "mint",
-    args: [solution],
-    value: mintPrice,
-  });
-  mintSpinner.update("Waiting for confirmation...");
-  const receipt = await publicClient.waitForTransactionReceipt({ hash: mintTx });
-  if (receipt.status === "reverted") {
-    throw new Error("Mint transaction reverted on-chain");
-  }
-  mintSpinner.stop("Minting... confirmed");
 
   // Parse token ID from Transfer event in receipt (avoids stale RPC reads)
   const TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
