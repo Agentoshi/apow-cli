@@ -263,6 +263,10 @@ interface StartupContext {
   hashpower: bigint;
 }
 
+function toBigInt(value: bigint | number): bigint {
+  return typeof value === "bigint" ? value : BigInt(value);
+}
+
 async function showStartupBanner(tokenId: bigint): Promise<StartupContext> {
   const { account } = requireWallet();
 
@@ -321,9 +325,9 @@ async function showStartupBanner(tokenId: bigint): Promise<StartupContext> {
   console.log("");
 
   return {
-    mineableSupply,
-    eraInterval,
-    hashpower: hashpowerRaw,
+    mineableSupply: toBigInt(mineableSupply),
+    eraInterval: toBigInt(eraInterval),
+    hashpower: toBigInt(hashpowerRaw),
   };
 }
 
