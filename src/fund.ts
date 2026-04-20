@@ -44,6 +44,18 @@ interface PriceInfo {
   solPriceUsd: number;
 }
 
+function showNonInteractiveFundingExamples(): void {
+  console.log("");
+  ui.warn("Headless funding needs an explicit route.");
+  ui.hint("Choose the source chain and token up front, then rerun one of:");
+  ui.hint("apow fund --chain base --token eth");
+  ui.hint("apow fund --chain base --token usdc");
+  ui.hint("apow fund --chain solana --token sol");
+  ui.hint("apow fund --chain solana --token usdc");
+  ui.hint("apow fund --chain ethereum");
+  console.log("");
+}
+
 async function fetchPrices(): Promise<PriceInfo> {
   const res = await fetch(
     "https://api.coingecko.com/api/v3/simple/price?ids=solana,ethereum&vs_currencies=usd",
@@ -571,10 +583,28 @@ export async function runFundFlow(options: FundOptions): Promise<void> {
     process.exit(1);
   }
 
+  const interactive = ui.isInteractiveSession();
   const baseAddress = account.address;
+  const noSwap = options.swap === false;
+
+  // Parse target ETH amount
+  const targetEth = options.amount ? parseFloat(options.amount) : 0.005;
+  if (isNaN(targetEth) || targetEth <= 0) {
+    ui.error("Invalid amount. Specify ETH target (e.g., --amount 0.005).");
+    return;
+  }
+
+  // Resolve source chain and token (from flags or interactive)
+  let chain = parseSourceChain(options.chain);
+  let token = parseSourceToken(options.token);
+
+  if (!interactive && (!chain || (chain !== "ethereum" && !token))) {
+    showNonInteractiveFundingExamples();
+    return;
+  }
+
   const ethBalance = Number(formatEther(await getEthBalance()));
   const usdcBalance = Number(formatUnits(await getUsdcBalance(baseAddress), 6));
-  const noSwap = options.swap === false;
 
   console.log("");
   ui.banner(["Fund Your Mining Wallet"]);
@@ -593,7 +623,7 @@ export async function runFundFlow(options: FundOptions): Promise<void> {
     console.log(`  Next: ${ui.cyan("apow mint")}`);
     console.log("");
 
-    if (!ui.isInteractiveSession()) {
+    if (!interactive) {
       return;
     }
 
@@ -601,17 +631,6 @@ export async function runFundFlow(options: FundOptions): Promise<void> {
     const addMore = await ui.confirm("Add more funds?");
     if (!addMore) return;
   }
-
-  // Parse target ETH amount
-  const targetEth = options.amount ? parseFloat(options.amount) : 0.005;
-  if (isNaN(targetEth) || targetEth <= 0) {
-    ui.error("Invalid amount. Specify ETH target (e.g., --amount 0.005).");
-    return;
-  }
-
-  // Resolve source chain and token (from flags or interactive)
-  let chain = parseSourceChain(options.chain);
-  let token = parseSourceToken(options.token);
 
   if (!chain) {
     chain = await selectSourceChain();

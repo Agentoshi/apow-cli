@@ -15,8 +15,7 @@ async function getClient(privateKey: `0x${string}`): Promise<QuicknodeX402Client
     baseUrl: QUICKNODE_BASE,
     network: BASE_MAINNET,
     evmPrivateKey: privateKey,
-    preAuth: true,
-    // paymentModel defaults to 'credit-drawdown' — no per-request payments
+    paymentModel: "pay-per-request",
   });
   return _client;
 }

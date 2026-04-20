@@ -5,7 +5,7 @@ import type { Address, Hex } from "viem";
 import { encodeFunctionData, formatEther, formatUnits } from "viem";
 
 import { TOKENS, SLIPPAGE_BPS } from "./constants";
-import { publicClient, requireWallet } from "../wallet";
+import { getFundingClients, requireWallet } from "../wallet";
 
 const SWAP_ROUTER = "0x2626664c2603336E57B271c5C0b26F421741e481" as Address;
 const WETH = TOKENS.base.weth;
@@ -88,6 +88,8 @@ const swapRouterAbi = [
 
 /** Get USDC balance for an address on Base. */
 export async function getUsdcBalance(address: Address): Promise<bigint> {
+  const { publicClient } = getFundingClients();
+
   return (await publicClient.readContract({
     address: USDC,
     abi: erc20Abi,
@@ -104,9 +106,12 @@ export async function swapEthToUsdc(
   ethAmount: bigint,
   minUsdcOut: bigint,
 ): Promise<{ txHash: Hex; usdcReceived: string }> {
-  const { account, walletClient } = requireWallet();
+  const walletContext = requireWallet();
+  const { publicClient, walletClient, account } = getFundingClients();
+  const swapWalletClient = walletClient ?? walletContext.walletClient;
+  const swapAccount = account ?? walletContext.account;
 
-  const txHash = await walletClient.writeContract({
+  const txHash = await swapWalletClient.writeContract({
     address: SWAP_ROUTER,
     abi: swapRouterAbi,
     functionName: "exactInputSingle",
@@ -115,7 +120,7 @@ export async function swapEthToUsdc(
         tokenIn: WETH,
         tokenOut: USDC,
         fee: FEE_TIER,
-        recipient: account.address,
+        recipient: swapAccount.address,
         amountIn: ethAmount,
         amountOutMinimum: minUsdcOut,
         sqrtPriceLimitX96: 0n,
@@ -130,7 +135,7 @@ export async function swapEthToUsdc(
   }
 
   // Read USDC balance after swap to report actual amount
-  const usdcBal = await getUsdcBalance(account.address);
+  const usdcBal = await getUsdcBalance(swapAccount.address);
   return { txHash, usdcReceived: formatUnits(usdcBal, 6) };
 }
 
@@ -142,18 +147,21 @@ export async function swapUsdcToEth(
   usdcAmount: bigint,
   minEthOut: bigint,
 ): Promise<{ txHash: Hex; ethReceived: string }> {
-  const { account, walletClient } = requireWallet();
+  const walletContext = requireWallet();
+  const { publicClient, walletClient, account } = getFundingClients();
+  const swapWalletClient = walletClient ?? walletContext.walletClient;
+  const swapAccount = account ?? walletContext.account;
 
   // Check and set USDC allowance
   const allowance = (await publicClient.readContract({
     address: USDC,
     abi: erc20Abi,
     functionName: "allowance",
-    args: [account.address, SWAP_ROUTER],
+    args: [swapAccount.address, SWAP_ROUTER],
   })) as bigint;
 
   if (allowance < usdcAmount) {
-    const approveTx = await walletClient.writeContract({
+    const approveTx = await swapWalletClient.writeContract({
       address: USDC,
       abi: erc20Abi,
       functionName: "approve",
@@ -183,12 +191,12 @@ export async function swapUsdcToEth(
   const unwrapData = encodeFunctionData({
     abi: swapRouterAbi,
     functionName: "unwrapWETH9",
-    args: [minEthOut, account.address],
+    args: [minEthOut, swapAccount.address],
   });
 
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 300); // 5 min
 
-  const txHash = await walletClient.writeContract({
+  const txHash = await swapWalletClient.writeContract({
     address: SWAP_ROUTER,
     abi: swapRouterAbi,
     functionName: "multicall",
@@ -200,6 +208,6 @@ export async function swapUsdcToEth(
     throw new Error("USDC→ETH swap reverted");
   }
 
-  const ethBal = await publicClient.getBalance({ address: account.address });
+  const ethBal = await publicClient.getBalance({ address: swapAccount.address });
   return { txHash, ethReceived: formatEther(ethBal) };
 }

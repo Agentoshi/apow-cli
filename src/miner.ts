@@ -1,5 +1,5 @@
 import type { Abi } from "viem";
-import { encodePacked, formatEther, keccak256, parseEther } from "viem";
+import { formatEther, parseEther } from "viem";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -223,40 +223,6 @@ function autoBuildGrinders(): boolean {
   return built > 0;
 }
 
-async function grindNonce(
-  challengeNumber: `0x${string}`,
-  target: bigint,
-  minerAddress: `0x${string}`,
-  onProgress?: (attempts: bigint, hashrate: number) => void,
-): Promise<{ nonce: bigint; attempts: bigint; hashrate: number; elapsed: number }> {
-  let nonce = 0n;
-  let attempts = 0n;
-  const start = process.hrtime();
-
-  while (true) {
-    const digest = BigInt(
-      keccak256(
-        encodePacked(["bytes32", "address", "uint256"], [challengeNumber, minerAddress, nonce]),
-      ),
-    );
-
-    attempts += 1n;
-    if (digest < target) {
-      const elapsed = elapsedSeconds(start);
-      const hashrate = elapsed > 0 ? Number(attempts) / elapsed : Number(attempts);
-      return { nonce, attempts, hashrate, elapsed };
-    }
-
-    if (onProgress && attempts % 50_000n === 0n) {
-      const elapsed = elapsedSeconds(start);
-      const hashrate = elapsed > 0 ? Number(attempts) / elapsed : Number(attempts);
-      onProgress(attempts, hashrate);
-    }
-
-    nonce += 1n;
-  }
-}
-
 interface StartupContext {
   mineableSupply: bigint;
   eraInterval: bigint;
@@ -405,7 +371,7 @@ export async function startMining(tokenId: bigint): Promise<void> {
   if (estimatedSeconds > 300) {
     console.log("");
     ui.warn(`Your grinder (~${formatRate(estHashrate)}) is far too slow for current difficulty.`);
-    console.log(`    Expected time per mine: ~${formatTime(estimatedSeconds)} (challenges go stale every ${staleCheckSeconds}s).`);
+    console.log(`    Expected time per mine: ~${formatTime(estimatedSeconds)} (CLI stale-check interval: ${staleCheckSeconds}s).`);
     console.log("");
     console.log(`    Fix options:`);
     console.log(`    1. Run ${ui.cyan("apow build-grinders")} for 100x faster local mining (~500 MH/s)`);
@@ -420,7 +386,7 @@ export async function startMining(tokenId: bigint): Promise<void> {
   } else if (estimatedSeconds > staleCheckSeconds) {
     console.log("");
     ui.warn(`Your grinder (~${formatRate(estHashrate)}) is too slow for current difficulty.`);
-    console.log(`    Expected time per mine: ~${formatTime(estimatedSeconds)} (challenges go stale every ${staleCheckSeconds}s).`);
+    console.log(`    Expected time per mine: ~${formatTime(estimatedSeconds)} (CLI stale-check interval: ${staleCheckSeconds}s).`);
     console.log("");
     console.log(`    Fix options:`);
     console.log(`    1. Run ${ui.cyan("apow build-grinders")} for 100x faster local mining (~500 MH/s)`);
@@ -495,7 +461,7 @@ export async function startMining(tokenId: bigint): Promise<void> {
       // local CPU while a remote GPU grind is already in flight.
       // Abort and re-fetch challenge periodically to avoid grinding a dead
       // nonce after another miner wins the block. Configurable via
-      // STALE_CHECK_INTERVAL env var (seconds, default 60).
+      // STALE_CHECK_INTERVAL env var (seconds, default 5).
       const staleCheckMs = config.staleCheckIntervalMs;
       let grind: GrindResult | null = null;
       let staleRestarts = 0;
@@ -519,7 +485,9 @@ export async function startMining(tokenId: bigint): Promise<void> {
           if (staleCheckStopped || abortController.signal.aborted) return;
           staleTimer = setTimeout(async () => {
             if (staleCheckStopped || abortController.signal.aborted || staleCheckInFlight) {
-              scheduleStaleCheck();
+              // Don't reschedule here — the in-flight check's finally block
+              // will reschedule when it completes. Rescheduling here causes
+              // exponential timer duplication over long sessions.
               return;
             }
 
@@ -623,6 +591,10 @@ export async function startMining(tokenId: bigint): Promise<void> {
             throw err;
           }
 
+          // Signal all losing grinders to stop — prevents zombie JS workers,
+          // HTTP fetches, and native processes from lingering between mines.
+          abortController.abort();
+
           const khs = grind.hashrate > 0 ? (grind.hashrate / 1000).toFixed(0) : "?";
           nonceSpinner.stop(`Nonce found (${grind.elapsed.toFixed(1)}s${grind.hashrate > 0 ? `, ${khs}k H/s` : ""})`);
 
@@ -649,7 +621,7 @@ export async function startMining(tokenId: bigint): Promise<void> {
             console.log(`  ${ui.dim("SMHL re-solved, grinding fresh challenge...")}`);
             if (staleRestarts >= 3 && staleRestarts % 3 === 0) {
               ui.warn(`Challenge has gone stale ${staleRestarts} times — grinder may be too slow for current difficulty.`);
-              ui.warn(`Tip: increase STALE_CHECK_INTERVAL (current: ${staleCheckMs / 1000}s) or use a faster grinder.`);
+              ui.warn(`Tip: decrease STALE_CHECK_INTERVAL below ${staleCheckMs / 1000}s for faster restarts, or use a faster grinder.`);
             }
             grind = null; // loop again
             continue;

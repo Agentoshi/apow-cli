@@ -46,6 +46,9 @@ const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
 const DEFAULT_CHAIN_NAME: ChainName = "base";
 const DEFAULT_MINING_AGENT_ADDRESS = "0xB7caD3ca5F2BD8aEC2Eb67d6E8D448099B3bC03D" as Address;
 const DEFAULT_AGENT_COIN_ADDRESS = "0x12577CF0D8a07363224D6909c54C056A183e13b3" as Address;
+const DEFAULT_STALE_CHECK_INTERVAL_MS = 5_000;
+const MIN_STALE_CHECK_INTERVAL_MS = 1_000;
+const MAX_STALE_CHECK_INTERVAL_MS = 60_000;
 
 const EXPENSIVE_MODELS = ["gpt-4o", "gpt-4", "claude-3-opus", "claude-3-5-sonnet"];
 const CHEAP_OVERRIDES = ["gpt-4o-mini", "gpt-4-mini"];
@@ -125,10 +128,14 @@ function resolveLlmApiKey(provider: LlmProvider): string | undefined {
 
 function resolveStaleCheckIntervalMs(): number {
   if (process.env.STALE_CHECK_INTERVAL) {
-    return parseInt(process.env.STALE_CHECK_INTERVAL, 10) * 1000;
+    const seconds = parseInt(process.env.STALE_CHECK_INTERVAL, 10);
+    if (Number.isFinite(seconds) && seconds > 0) {
+      const intervalMs = seconds * 1000;
+      return Math.min(MAX_STALE_CHECK_INTERVAL_MS, Math.max(MIN_STALE_CHECK_INTERVAL_MS, intervalMs));
+    }
   }
 
-  return 10_000;
+  return DEFAULT_STALE_CHECK_INTERVAL_MS;
 }
 
 function buildConfig(): AppConfig {

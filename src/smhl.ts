@@ -521,7 +521,9 @@ export async function solveSmhlChallenge(
         if (isPermanentProviderError(msg)) {
           throw new Error(`SMHL solve failed with ${describeProvider(provider)}: ${msg}`);
         }
-        feedback = msg;
+        // Don't pass network/provider error messages as LLM feedback —
+        // it confuses the prompt. Clear feedback so next attempt starts fresh.
+        feedback = undefined;
         lastIssues = `attempt ${attempt} (${describeProvider(provider)}): ${msg}`;
         break;
       }

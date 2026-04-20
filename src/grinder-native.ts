@@ -139,9 +139,23 @@ export async function grindNonceNative(
       return s + ns / 1_000_000_000;
     }
 
+    function terminateProcess(proc: ChildProcess) {
+      try {
+        proc.kill("SIGTERM");
+      } catch {
+        return;
+      }
+
+      setTimeout(() => {
+        if (proc.exitCode === null && proc.signalCode === null) {
+          try { proc.kill("SIGKILL"); } catch {}
+        }
+      }, 250);
+    }
+
     function cleanup() {
       for (const proc of processes) {
-        try { proc.kill("SIGTERM"); } catch {}
+        terminateProcess(proc);
       }
       if (info.remoteGpu) {
         try {

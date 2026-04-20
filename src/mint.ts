@@ -138,28 +138,41 @@ export async function runMintFlow(options: MintFlowOptions = {}): Promise<bigint
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     // Request challenge
     const challengeSpinner = ui.spinner(`Requesting challenge${attempt > 1 ? ` (retry ${attempt}/2)` : ""}...`);
-    const challengeTx = await walletClient.writeContract({
-      address: config.miningAgentAddress,
-      abi: miningAgentAbi,
-      account,
-      functionName: "getChallenge",
-      args: [account.address],
-    });
-    const challengeReceipt = await publicClient.waitForTransactionReceipt({ hash: challengeTx });
-    if (challengeReceipt.status === "reverted") {
-      throw new Error("Challenge request reverted on-chain");
+    let challengeReceipt: Awaited<ReturnType<typeof publicClient.waitForTransactionReceipt>>;
+    try {
+      const challengeTx = await walletClient.writeContract({
+        address: config.miningAgentAddress,
+        abi: miningAgentAbi,
+        account,
+        functionName: "getChallenge",
+        args: [account.address],
+      });
+      challengeReceipt = await publicClient.waitForTransactionReceipt({ hash: challengeTx });
+      if (challengeReceipt.status === "reverted") {
+        throw new Error("Challenge request reverted on-chain");
+      }
+    } catch (error) {
+      challengeSpinner.fail(`Requesting challenge... failed`);
+      throw error;
     }
     challengeSpinner.stop(`Requesting challenge${attempt > 1 ? ` (retry ${attempt}/2)` : ""}... done`);
 
-    // Read the seed at the exact receipt block so we do not burn the 20s window
-    // waiting for latest-state propagation on slower RPCs.
-    let challengeSeed = (await publicClient.readContract({
-      address: config.miningAgentAddress,
-      abi: miningAgentAbi,
-      functionName: "challengeSeeds",
-      args: [account.address],
-      blockNumber: challengeReceipt.blockNumber,
-    })) as Hex;
+    // Try reading the seed at the exact receipt block to avoid burning the 20s
+    // window waiting for latest-state propagation.  Many public RPCs are NOT
+    // archive nodes, so they throw "header not found" for historical blocks —
+    // catch that and fall through to latest-state polling.
+    let challengeSeed = ZERO_SEED as Hex;
+    try {
+      challengeSeed = (await publicClient.readContract({
+        address: config.miningAgentAddress,
+        abi: miningAgentAbi,
+        functionName: "challengeSeeds",
+        args: [account.address],
+        blockNumber: challengeReceipt.blockNumber,
+      })) as Hex;
+    } catch {
+      // Non-archive RPC — fall through to latest-state polling below.
+    }
 
     if (challengeSeed.toLowerCase() === ZERO_SEED.toLowerCase()) {
       // Fall back to latest-state polling if the provider does not expose the
@@ -183,9 +196,15 @@ export async function runMintFlow(options: MintFlowOptions = {}): Promise<bigint
     // Solve SMHL
     const challenge = deriveChallengeFromSeed(challengeSeed);
     const smhlSpinner = ui.spinner("Solving SMHL...");
-    const solution = await solveSmhlChallenge(challenge, (smhlAttempt) => {
-      smhlSpinner.update(`Solving SMHL... attempt ${smhlAttempt}/5`);
-    });
+    let solution: string;
+    try {
+      solution = await solveSmhlChallenge(challenge, (smhlAttempt) => {
+        smhlSpinner.update(`Solving SMHL... attempt ${smhlAttempt}/5`);
+      });
+    } catch (error) {
+      smhlSpinner.fail("Solving SMHL... failed");
+      throw error;
+    }
     smhlSpinner.stop("Solving SMHL... done");
 
     // Mint

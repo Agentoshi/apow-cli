@@ -109,6 +109,7 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
   // Check 2: RPC reachable + chain ID
   // Skip when: no RPC configured at all, or x402 active but unfunded
   const hasRpc = config.useX402 || !!config.rpcUrl;
+  let rpcReachable = false;
   if (hasRpc && (!config.useX402 || x402Funded)) {
     try {
       const chainId = await publicClient.getChainId();
@@ -120,6 +121,7 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
           fix: "Update RPC_URL to point to the correct network",
         });
       } else {
+        rpcReachable = true;
         results.push({ label: `RPC connected — ${config.chain.name}`, passed: true });
       }
     } catch {
@@ -148,8 +150,8 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
         });
     }
 
-    // Check 4: Wallet has ETH
-    if (account) {
+    // Check 4: Wallet has ETH (skip if RPC already failed — avoids duplicate errors)
+    if (account && rpcReachable) {
       try {
         const balance = await publicClient.getBalance({ address: account.address });
         const ethBalance = Number(formatEther(balance));
@@ -246,8 +248,10 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
     }
   }
 
-  // Check 6: Contracts exist on-chain (bytecode check)
-  try {
+  // Check 6: Contracts exist on-chain (bytecode check) — skip if RPC is unreachable
+  if (!rpcReachable) {
+    // Don't pile on errors when RPC is already known to be down
+  } else try {
     const [miningAgentCode, agentCoinCode] = await Promise.all([
       publicClient.getCode({ address: config.miningAgentAddress }),
       publicClient.getCode({ address: config.agentCoinAddress }),

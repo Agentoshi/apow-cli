@@ -15,7 +15,7 @@ import type { GrindResult } from "./grinder";
 import { config } from "./config";
 
 const DEFAULT_GRIND_URL = "https://grind.apow.io/grind";
-const GRIND_HTTP_TIMEOUT_MS = 20_000;
+const GRIND_HTTP_TIMEOUT_MS = 60_000;
 
 // Lazy singleton — created on first grind, reused across calls
 let _fetchWithPayment: typeof fetch | null = null;

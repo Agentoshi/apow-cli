@@ -71,11 +71,12 @@ function ensureGitignoreSafetyEntries(): void {
 async function maybeCreateEncryptedKeystoreBackup(
   address: `0x${string}`,
   privateKey: `0x${string}`,
+  opts: { promptIfMissingPassword?: boolean } = {},
 ): Promise<string | null> {
   const envPassword = process.env.KEYSTORE_PASSWORD?.trim();
   let password = envPassword ?? "";
 
-  if (!password && ui.isInteractiveSession()) {
+  if (!password && opts.promptIfMissingPassword && ui.isInteractiveSession()) {
     const createBackup = await ui.confirm("Create encrypted JSON keystore backup? (recommended)");
     if (!createBackup) {
       return null;
@@ -104,7 +105,7 @@ async function maybeCreateEncryptedKeystoreBackup(
 async function saveWalletArtifacts(
   address: `0x${string}`,
   privateKey: `0x${string}`,
-  opts: { createPlaintextImportFile?: boolean } = {},
+  opts: { createPlaintextImportFile?: boolean; promptForKeystoreBackup?: boolean } = {},
 ): Promise<{ plaintextPath?: string; keystorePath?: string }> {
   const result: { plaintextPath?: string; keystorePath?: string } = {};
 
@@ -112,7 +113,9 @@ async function saveWalletArtifacts(
     result.plaintextPath = savePlaintextImportFile(address, privateKey);
   }
 
-  const keystorePath = await maybeCreateEncryptedKeystoreBackup(address, privateKey);
+  const keystorePath = await maybeCreateEncryptedKeystoreBackup(address, privateKey, {
+    promptIfMissingPassword: opts.promptForKeystoreBackup === true,
+  });
   if (keystorePath) {
     result.keystorePath = keystorePath;
   }
@@ -351,6 +354,22 @@ async function setupWizard(): Promise<void> {
   console.log("");
 }
 
+function showHeadlessFundingHandoff(address: `0x${string}`, needsEth: boolean, needsUsdc: boolean): void {
+  ui.warn("Headless session detected — pausing before funding.");
+  ui.hint(`Send funds to ${address} on Base.`);
+  if (needsEth) {
+    ui.hint(`Need at least ${MIN_ETH} ETH for gas and minting.`);
+  }
+  if (needsUsdc) {
+    ui.hint(`Need at least ${MIN_USDC} USDC for QuickNode + ClawRouter x402.`);
+  }
+  ui.hint("Funding routes:");
+  ui.hint("Direct on Base: send ETH and/or USDC to this wallet");
+  ui.hint("Bridge from Solana: apow fund --chain solana --token sol");
+  ui.hint("Bridge from Ethereum: apow fund --chain ethereum");
+  ui.hint("After funds arrive, rerun `apow start`.");
+}
+
 async function runStartFlow(): Promise<void> {
   if (!config.privateKey || !account) {
     console.log("");
@@ -421,6 +440,11 @@ async function runStartFlow(): Promise<void> {
       ["USDC", config.useX402 ? (balanceChecksAvailable ? `${usdcBalance.toFixed(2)} USDC${needsUsdc ? ` (need ≥${MIN_USDC})` : ""}` : "unknown (RPC check failed)") : "not required"],
     ]);
     console.log("");
+
+    if (!ui.isInteractiveSession()) {
+      showHeadlessFundingHandoff(account.address, needsEth, needsUsdc);
+      return;
+    }
 
     const runFunding = await ui.confirm("Run funding flow now?");
     if (!runFunding) {
@@ -537,16 +561,23 @@ async function main(): Promise<void> {
       const miningAccount = account!;
       let tokenId: bigint;
       if (tokenIdArg) {
-        await runPreflight("mining");
         tokenId = parseTokenId(tokenIdArg);
+        await runPreflight("mining");
       } else {
-        const miners = await detectMiners(miningAccount.address);
+        await runPreflight("mining");
+        let miners: Awaited<ReturnType<typeof detectMiners>>;
+        try {
+          miners = await detectMiners(miningAccount.address);
+        } catch {
+          ui.error("Could not detect mining rigs — RPC may be unreachable.");
+          ui.hint("Check your RPC_URL or USDC balance for x402, then retry.");
+          return;
+        }
         if (miners.length === 0) {
           ui.warn("No mining rigs found — launching guided start flow.");
           await runStartFlow();
           return;
         }
-        await runPreflight("mining");
         tokenId = selectBestMiner(miners).tokenId;
         if (miners.length === 1) {
           console.log(`  Using miner #${tokenId} (${miners[0].rarityLabel}, ${formatHashpower(miners[0].hashpower)})`);
@@ -668,6 +699,7 @@ async function main(): Promise<void> {
       const savePlaintext = await ui.confirm("Save plaintext import helper?");
       const artifacts = await saveWalletArtifacts(account.address, config.privateKey, {
         createPlaintextImportFile: savePlaintext,
+        promptForKeystoreBackup: true,
       });
       if (artifacts.plaintextPath) {
         console.log(`  ${ui.dim(`Saved import helper: ${artifacts.plaintextPath}`)}`);

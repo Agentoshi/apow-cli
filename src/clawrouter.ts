@@ -17,6 +17,13 @@ interface ProxyHandle {
 let _handle: ProxyHandle | null = null;
 let _starting: Promise<ProxyHandle> | null = null;
 
+function importEsmModule<T>(specifier: string): Promise<T> {
+  // Keep a real runtime import() so CommonJS builds can load ESM-only packages.
+  return Function("specifier", "return import(specifier)")(
+    specifier,
+  ) as Promise<T>;
+}
+
 function getPort(): number {
   const envPort = process.env.CLAWROUTER_PORT;
   if (envPort) {
@@ -45,7 +52,7 @@ export async function ensureClawRouter(privateKey: Hex): Promise<void> {
   }
 
   _starting = (async () => {
-    const { startProxy } = await import("@blockrun/clawrouter");
+    const { startProxy } = await importEsmModule<typeof import("@blockrun/clawrouter")>("@blockrun/clawrouter");
     const port = getPort();
 
     const handle: ProxyHandle = await startProxy({

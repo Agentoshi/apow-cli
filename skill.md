@@ -1,17 +1,14 @@
 ---
 name: apow-mine
 description: Set up and start mining AGENT tokens on Base L2 using apow-cli. Easy Mode uses x402 for RPC, LLM, and GPU grinding with no config beyond wallet funding.
-allowed-tools: Bash(npx:*), Bash(node:*), Bash(curl:*)
+allowed-tools: Bash(npx:*), Bash(node:*), Bash(npm:*), Bash(curl:*), Bash(cat:*), Bash(echo:*), Bash(ls:*), Bash(mkdir:*)
 argument-hint: [setup|mint|mine|stats]
 metadata:
   openclaw:
     requires:
-      env:
-        - PRIVATE_KEY
       anyBins:
         - npx
         - node
-    primaryEnv: PRIVATE_KEY
 ---
 
 # APoW Mining Skill
@@ -22,7 +19,9 @@ metadata:
 and mine autonomously. The only step that requires your user is funding the wallet with ETH + USDC
 on Base. Everything else you handle yourself.
 
-> **Easy Mode:** `apow setup` now starts with `Easy Mode` vs `Advanced Mode`. Easy Mode is the default and uses x402 for RPC, LLM, and GPU grinding with no API keys.
+> **Mode guide**
+> - **Easy Mode** (recommended / beginner path): run `npx apow-cli start` or `npx apow-cli setup`, choose `Easy Mode`, let the CLI generate a wallet and private key if needed, then hand the user the funding address. No API keys or pre-existing `PRIVATE_KEY` are required up front.
+> - **Advanced Mode:** bring your own wallet, RPC, LLM, and grinder settings via `.env` or the interactive setup flow.
 
 ---
 
@@ -40,17 +39,35 @@ cd apow-cli && npm install
 npx tsx src/index.ts start
 ```
 
-### Autonomous Agent Flow — Zero Credentials (non-interactive)
+### Recommended Agent Flow — Easy Mode
 
-If you're an AI agent, you can skip the wizard and write the `.env` directly.
-**No API keys needed.** The same wallet pays for x402 RPC, x402 LLM, and x402 GPU grinding.
+For OpenClaw and other interactive agents, start here. Do not ask the user for a `PRIVATE_KEY`
+before running Easy Mode.
+
+```bash
+npx apow-cli start
+```
+
+1. Choose `Easy Mode`
+2. If no wallet exists yet, let the CLI generate it and show the new Base address
+3. Hand the funding address to the user and explain they need ETH for gas + minting and USDC for the x402 stack
+4. If they want the built-in bridge, use `npx apow-cli fund`; otherwise let them fund the wallet manually
+5. After funding arrives, rerun `npx apow-cli start` to continue through minting and mining
+
+Easy Mode writes the x402-backed config for the user. The manual requirement is funding the newly
+generated wallet, not bringing a private key or API keys ahead of time.
+
+### Headless Fallback — Reproduce Easy Mode Defaults Manually
+
+Only use this if the environment cannot drive the interactive CLI prompts. This reproduces the
+same zero-credential x402 stack that Easy Mode would write for you.
 
 ```bash
 # 1. Generate a wallet
 npx apow-cli wallet new
 # Captures address + private key from output (and can save a plaintext import helper plus encrypted keystore)
 
-# 2. Write .env directly — Easy Mode equivalent
+# 2. Write .env directly — headless fallback for Easy Mode
 # Contract addresses are built-in defaults — no need to specify them
 cat > .env << 'EOF'
 PRIVATE_KEY=0x<from step 1>
@@ -65,7 +82,12 @@ EOF
 npx apow-cli start
 ```
 
-### Legacy Flow (with API keys)
+In headless shells like OpenClaw, treat funding as a user handoff. Do not run `apow fund`
+without explicit `--chain` and `--token` flags. If `npx apow-cli start` reports that funding
+is needed, show the wallet address, explain the funding options, wait for the user to fund the
+wallet or pick a route, then rerun `npx apow-cli start`.
+
+### Advanced Mode / Manual Flow
 
 If you prefer to use your own LLM API key instead of ClawRouter:
 
@@ -112,29 +134,31 @@ The miner client validates locally before submitting.
 | Requirement | Details |
 |---|---|
 | **Node.js** | v20 or higher |
-| **Base wallet** | A private key with ETH on Base (for gas + mint fee) |
-| **USDC on Base** | 2.00 USDC minimum starting balance for x402 RPC/ClawRouter; more gives headroom |
-| **LLM access** | ClawRouter (zero credentials, recommended) OR API key (OpenAI, Gemini, etc.) OR local Ollama (**required for minting only**) |
+| **Base wallet** | Easy Mode: none up front, the CLI can create one for you. Advanced Mode: existing private key with ETH on Base for gas + mint fee. |
+| **USDC on Base** | 2.00 USDC minimum starting balance in the mining wallet for x402 RPC / ClawRouter / remote grind; more gives headroom |
+| **LLM access** | Easy Mode: none up front, uses ClawRouter via x402. Advanced Mode: API key (OpenAI, Gemini, etc.) or local Ollama for minting. |
 | **git** | Only if installing from source (not needed for npm) |
 
 ---
 
 ## 3. Step 1: Create a Mining Wallet
 
-The miner CLI can generate a wallet for you during setup:
+In Easy Mode, the normal path is to let `apow start` or `apow setup` create the mining wallet for
+you. You do not need to arrive with a `PRIVATE_KEY`.
 
 ```bash
-npx apow-cli setup
+npx apow-cli start
+# Choose "Easy Mode"
 # Select "No" when asked if you have a wallet → generates one automatically
 ```
 
-Or generate one directly (useful for agents, no prompts):
+You can also generate one directly (useful for agents, headless shells, or Advanced Mode):
 
 ```bash
 npx apow-cli wallet new
 ```
 
-This outputs a private key (0x + 64 hex chars) and Base address, saves a plaintext `wallet-<address>.txt` import helper to the current directory, and can also create an encrypted `wallet-<address>.json` keystore under `~/.apow/keystores/` when a password is available. The private key goes in your `.env` as `PRIVATE_KEY`.
+This outputs a private key (0x + 64 hex chars) and Base address, saves a plaintext `wallet-<address>.txt` import helper to the current directory, and can also create an encrypted `wallet-<address>.json` keystore under `~/.apow/keystores/` when a password is available. If you are using a manual or headless flow, put that key in your `.env` as `PRIVATE_KEY`.
 
 **Exporting an existing wallet:** If you've already set up a wallet and need to retrieve the key:
 
@@ -209,7 +233,8 @@ npx apow-cli stats
 
 **Via npm (no install needed):**
 ```bash
-npx apow-cli setup
+npx apow-cli start
+# or: npx apow-cli setup
 ```
 All `apow` commands work via `npx` with no global install required.
 
@@ -222,7 +247,10 @@ cd apow-cli && npm install
 
 ---
 
-## 6. Step 3: Configure Environment
+## 6. Step 3: Configure Environment (Advanced Mode / Manual Setup)
+
+Skip this section for Easy Mode. The CLI writes the equivalent config for you during `apow start`
+or `apow setup`. Use a manual `.env` only when you want full control or need a headless fallback.
 
 Run `npx apow-cli setup` for interactive configuration, or create a `.env` file manually in your working directory:
 
@@ -230,9 +258,10 @@ Run `npx apow-cli setup` for interactive configuration, or create a `.env` file 
 # === Required ===
 
 # Your wallet private key (0x-prefixed, 64 hex chars)
+# Required for manual / headless minting and mining commands
 PRIVATE_KEY=0xYOUR_PRIVATE_KEY_HERE
 
-# Deployed contract addresses (set after mainnet deployment)
+# Built-in Base mainnet defaults. Only override if you want a different deployment.
 MINING_AGENT_ADDRESS=0xB7caD3ca5F2BD8aEC2Eb67d6E8D448099B3bC03D
 AGENT_COIN_ADDRESS=0x12577CF0D8a07363224D6909c54C056A183e13b3
 
@@ -250,7 +279,7 @@ LLM_MODEL=blockrun/eco
 
 # === Network ===
 
-# Base RPC endpoint (required). Get a free URL from alchemy.com (no credit card).
+# Base RPC endpoint (optional if USE_X402=true). Get a free URL from alchemy.com (no credit card).
 # Or set USE_X402=true instead for auto-pay via QuickNode (2.00 USDC minimum starting balance; add more for headroom).
 RPC_URL=https://base-mainnet.g.alchemy.com/v2/YOUR_KEY
 
@@ -262,16 +291,16 @@ CHAIN=base
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `PRIVATE_KEY` | Yes | - | Wallet private key (0x + 64 hex chars) |
+| `PRIVATE_KEY` | Manual / headless only | - | Wallet private key (0x + 64 hex chars). Easy Mode generates this for you if no wallet exists yet. |
 | `KEYSTORE_PASSWORD` | No | unset | If set, `wallet new`/`wallet export` also create an encrypted JSON keystore backup under `~/.apow/keystores/` |
-| `MINING_AGENT_ADDRESS` | Yes | - | Deployed MiningAgent contract address |
-| `AGENT_COIN_ADDRESS` | Yes | - | Deployed AgentCoin contract address |
-| `LLM_PROVIDER` | For minting | `clawrouter` if `USE_X402=true`, else `openai` | LLM provider for minting: `clawrouter` (recommended, zero credentials), `openai`, `gemini`, `deepseek`, `qwen`, `anthropic`, `ollama`, `claude-code`, `codex`. Not needed for mining. |
-| `LLM_API_KEY` | For minting* | - | API key for minting. Not needed for `clawrouter`, `ollama`, `claude-code`, `codex`, or mining. Falls back to `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY`. |
-| `LLM_MODEL` | For minting | per-provider (e.g. `blockrun/eco`, `gpt-4o-mini`) | Model identifier passed to the provider (minting only). Auto-detected from provider if omitted. |
+| `MINING_AGENT_ADDRESS` | No | built-in Base mainnet address | MiningAgent contract address. Override only for another deployment or network. |
+| `AGENT_COIN_ADDRESS` | No | built-in Base mainnet address | AgentCoin contract address. Override only for another deployment or network. |
+| `LLM_PROVIDER` | No | `clawrouter` if `USE_X402=true`, else `openai` | LLM provider for minting: `clawrouter` (recommended, zero credentials), `openai`, `gemini`, `deepseek`, `qwen`, `anthropic`, `ollama`, `claude-code`, `codex`. Not needed for mining. |
+| `LLM_API_KEY` | Only for cloud providers that require one | - | API key for minting. Not needed for `clawrouter`, `ollama`, `claude-code`, `codex`, or mining. Falls back to `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `DASHSCOPE_API_KEY`. |
+| `LLM_MODEL` | No | per-provider default (e.g. `blockrun/eco`, `gpt-4o-mini`) | Model identifier passed to the provider (minting only). Auto-detected from provider if omitted. |
 | `CLAWROUTER_PORT` | No | `8402` | Port for ClawRouter local proxy (only if default is in use) |
 | `MINER_THREADS` | No | All CPU cores | Threads for JS nonce grinding (fallback if no native GPU/CPU grinder detected) |
-| `RPC_URL` | Yes* | — | Base JSON-RPC endpoint. Get a free URL from Alchemy or QuickNode. *Not needed if `USE_X402=true`. |
+| `RPC_URL` | No* | — | Base JSON-RPC endpoint. Get a free URL from Alchemy or QuickNode. *Not needed if `USE_X402=true`. |
 | `USE_X402` | No | `false` | Set to `true` to auto-pay via QuickNode x402 (2.00 USDC minimum starting balance; add more for headroom). Replaces `RPC_URL`. |
 | `CHAIN` | No | `base` | Network selector; auto-detects `baseSepolia` if RPC URL contains "sepolia" |
 | `SOLANA_RPC_URL` | No | `https://api.mainnet-beta.solana.com` | Solana RPC endpoint (only for `apow fund --chain solana`) |
@@ -621,10 +650,10 @@ Use the corresponding testnet contract addresses.
 
 | Error | Cause | Fix |
 |---|---|---|
-| `PRIVATE_KEY is required for minting and mining commands.` | Missing or unset `PRIVATE_KEY` in `.env` | Add `PRIVATE_KEY=0x...` to your `.env` file |
+| `PRIVATE_KEY is required for minting and mining commands.` | No wallet is configured for the current manual command | Run `npx apow-cli start` and choose Easy Mode to generate one, or add `PRIVATE_KEY=0x...` to your `.env` file |
 | `PRIVATE_KEY must be a 32-byte hex string prefixed with 0x.` | Malformed private key | Ensure key is exactly `0x` + 64 hex characters |
-| `MINING_AGENT_ADDRESS is required.` | Contract address not set | Set `MINING_AGENT_ADDRESS` in `.env` |
-| `AGENT_COIN_ADDRESS is required.` | Contract address not set | Set `AGENT_COIN_ADDRESS` in `.env` |
+| `MINING_AGENT_ADDRESS is required.` | Contract address missing or overridden with an invalid value | Remove the bad override to use the built-in default, or set the correct `MINING_AGENT_ADDRESS` in `.env` |
+| `AGENT_COIN_ADDRESS is required.` | Contract address missing or overridden with an invalid value | Remove the bad override to use the built-in default, or set the correct `AGENT_COIN_ADDRESS` in `.env` |
 | `LLM_API_KEY is required for openai.` | Missing API key for cloud provider | Set `LLM_API_KEY` (or provider-specific key like `OPENAI_API_KEY`) in `.env`, or switch to `ollama` |
 | `Insufficient fee` | Not enough ETH sent with mint | Check `getMintPrice()` and ensure wallet has enough ETH |
 | `Sold out` | All 10,000 Miner NFTs minted | No more rigs available; buy one on secondary market |

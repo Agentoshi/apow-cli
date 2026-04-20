@@ -6,6 +6,7 @@ import { config } from "./config";
 import { createX402Transport } from "./x402";
 
 const DATA_SUFFIX = Attribution.toDataSuffix({ codes: ["bc_6wfeb1kd"] });
+const BASE_BOOTSTRAP_RPC_URL = "https://mainnet.base.org";
 
 function getTransport(): Transport {
   if (config.useX402 && config.privateKey) {
@@ -34,6 +35,28 @@ export let walletClient = account
     })
   : null;
 
+let bootstrapPublicClient = createPublicClient({
+  chain: config.chain,
+  transport: http(BASE_BOOTSTRAP_RPC_URL),
+});
+
+let bootstrapAccount = config.privateKey
+  ? privateKeyToAccount(config.privateKey)
+  : null;
+
+let bootstrapWalletClient = bootstrapAccount
+  ? createWalletClient({
+      account: bootstrapAccount,
+      chain: config.chain,
+      transport: http(BASE_BOOTSTRAP_RPC_URL),
+      dataSuffix: DATA_SUFFIX,
+    })
+  : null;
+
+function shouldUseBootstrapFundingClients(): boolean {
+  return config.useX402 && config.chainName === "base";
+}
+
 /** Reinitialize clients after config changes (e.g., x402 fallback). */
 export function reinitClients(): void {
   transport = getTransport();
@@ -49,6 +72,34 @@ export function reinitClients(): void {
         dataSuffix: DATA_SUFFIX,
       })
     : null;
+
+  bootstrapPublicClient = createPublicClient({
+    chain: config.chain,
+    transport: http(BASE_BOOTSTRAP_RPC_URL),
+  });
+  bootstrapAccount = config.privateKey
+    ? privateKeyToAccount(config.privateKey)
+    : null;
+  bootstrapWalletClient = bootstrapAccount
+    ? createWalletClient({
+        account: bootstrapAccount,
+        chain: config.chain,
+        transport: http(BASE_BOOTSTRAP_RPC_URL),
+        dataSuffix: DATA_SUFFIX,
+      })
+    : null;
+}
+
+export function getFundingClients() {
+  if (shouldUseBootstrapFundingClients()) {
+    return {
+      publicClient: bootstrapPublicClient,
+      account: bootstrapAccount,
+      walletClient: bootstrapWalletClient,
+    };
+  }
+
+  return { publicClient, account, walletClient };
 }
 
 export function requireWallet() {
@@ -60,6 +111,7 @@ export function requireWallet() {
 }
 
 export async function getEthBalance(): Promise<bigint> {
-  if (!account) return 0n;
-  return publicClient.getBalance({ address: account.address });
+  const { publicClient: balanceClient, account: balanceAccount } = getFundingClients();
+  if (!balanceAccount) return 0n;
+  return balanceClient.getBalance({ address: balanceAccount.address });
 }
