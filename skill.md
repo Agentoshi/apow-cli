@@ -300,6 +300,7 @@ CHAIN=base
 | `LLM_MODEL` | No | per-provider default (e.g. `blockrun/eco`, `gpt-4o-mini`) | Model identifier passed to the provider (minting only). Auto-detected from provider if omitted. |
 | `CLAWROUTER_PORT` | No | `8402` | Port for ClawRouter local proxy (only if default is in use) |
 | `MINER_THREADS` | No | All CPU cores | Threads for JS nonce grinding (fallback if no native GPU/CPU grinder detected) |
+| `STALE_CHECK_INTERVAL` | No | `5` | Seconds between stale-challenge checks while grinding. Applies across local/native and x402 grinders; lower values restart dead work faster but add more RPC reads. |
 | `RPC_URL` | No* | — | Base JSON-RPC endpoint. Get a free URL from Alchemy or QuickNode. *Not needed if `USE_X402=true`. |
 | `USE_X402` | No | `false` | Set to `true` to auto-pay via QuickNode x402 (2.00 USDC minimum starting balance; add more for headroom). Replaces `RPC_URL`. |
 | `CHAIN` | No | `base` | Network selector; auto-detects `baseSepolia` if RPC URL contains "sepolia" |
@@ -441,6 +442,7 @@ npx apow-cli mine <tokenId> # or specify a rig by token ID
    - `smhl`: the SMHL format challenge
 4. **Solve SMHL:** generates a valid SMHL solution algorithmically (sub-millisecond, no LLM needed).
 5. **Grind nonce:** brute-force search for a `nonce` where `keccak256(challengeNumber, minerAddress, nonce) < miningTarget`. Works on any CPU out of the box. Add a GPU for 100x+ faster grinding.
+   The CLI re-checks the challenge every 5 seconds by default while grinding and aborts stale work across local/native and x402 nonce sources.
 6. **Submit proof:** calls `mine(nonce, smhlSolution, tokenId)` on AgentCoin. The contract verifies both the hash and SMHL solution on-chain.
 7. **Collect reward:** AGENT tokens are minted directly to your wallet.
 8. **Wait for next block:** the protocol enforces one mine per block network-wide. The client waits for block advancement before the next cycle.
@@ -479,6 +481,7 @@ A Mythic miner (5.00x) earns 15.00 AGENT per mine in Era 0.
 
 The miner has built-in resilience:
 - **Flat retry delay** on transient failures (about 2s with a small jitter)
+- **Background stale checks** every 5 seconds by default so slow grinders do not waste a full attempt on a dead challenge
 - **Max 10 consecutive failures** before the miner exits
 - **Fatal errors** cause immediate exit: `"Not your miner"`, `"Supply exhausted"`, `"No contracts"`
 - **Block timing** is handled automatically: if the block hasn't advanced, the miner waits
@@ -665,6 +668,7 @@ Use the corresponding testnet contract addresses.
 | `No contracts` | Calling from a contract, not an EOA | Mining requires an externally owned account (EOA) |
 | `Invalid hash` | Nonce does not meet difficulty target | Bug in nonce grinding; should not happen under normal operation |
 | `Nonce too high` | Wallet nonce desync | Reset nonce in wallet or wait for pending transactions to confirm |
+| Frequent `stale #N` restarts | Your grinder is slower than the current network difficulty | Expected on slow rigs. The default 5-second stale check already reduces wasted work; use a faster grinder or lower `STALE_CHECK_INTERVAL` if you intentionally want more aggressive polling. |
 | `Anthropic request failed: 429` | Rate limited by Anthropic API | Reduce mining frequency or upgrade API plan |
 | `Ollama request failed: 500` | Ollama server error | Check `ollama serve` is running; restart if needed |
 | `SMHL solve failed after 5 attempts` | LLM cannot satisfy constraints | Switch to a more capable model (e.g., `gpt-4o` or `claude-sonnet-4-5-20250929`) |

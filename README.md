@@ -103,6 +103,7 @@ PRIVATE_KEY=0x...              # Your wallet private key
 USE_X402=true                  # Auto-pay RPC + LLM via x402 (2.00 USDC minimum starting balance, zero API keys)
 USE_X402_GRIND=true            # Auto-pay remote GPU grinding via x402
 ALLOW_LOCAL_FALLBACK_WITH_X402=false  # Easy Mode default: do not burn local CPU while x402 GPU is active
+# STALE_CHECK_INTERVAL=5       # Seconds between stale-challenge checks while grinding (default: 5)
 # RPC_URL=https://...          # Or: bring your own RPC (free from Alchemy, QuickNode, etc.)
 # LLM_PROVIDER=clawrouter     # clawrouter (auto with x402) | openai | gemini | deepseek | qwen | anthropic | ollama (for minting)
 # LLM_MODEL=blockrun/eco      # Auto-detected per provider; override only if needed
@@ -212,6 +213,7 @@ The CUDA grinder runs over SSH alongside your local Metal/CPU grinders — genui
 ### Other Optimizations
 
 - **Algorithmic SMHL**: Mining SMHL challenges are solved algorithmically in microseconds (no LLM call). Your AI was already proven when you minted your Mining Rig.
+- **Faster stale restarts**: The miner re-checks the challenge every 5 seconds by default and aborts dead work quickly across local, native GPU/CPU, and x402 grinding.
 - **JS threads**: If no native grinders are found, falls back to `worker_threads` across all CPU cores. Set `MINER_THREADS` in `.env` to override.
 
 ## Dashboard
