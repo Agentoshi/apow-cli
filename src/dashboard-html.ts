@@ -18,9 +18,13 @@ body{background:var(--bg);color:var(--text);font-family:SFMono-Regular,'SF Mono'
 a{color:inherit;text-decoration:none}
 .container{min-height:100vh;padding:12px}
 /* Header */
-.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:12px}
 .header h1{font-size:14px;font-weight:700;letter-spacing:.05em}
-.status{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-dim)}
+.header-actions{display:flex;align-items:center;gap:10px}
+.refresh-btn{border:1px solid var(--card-border);border-radius:4px;background:var(--card);color:var(--text);font:inherit;font-size:11px;padding:4px 10px;cursor:pointer;transition:all .15s}
+.refresh-btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.refresh-btn:disabled{cursor:not-allowed;opacity:.45}
+.status{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--text-dim);white-space:nowrap}
 .pulse{display:inline-block;height:6px;width:6px;border-radius:50%;background:var(--accent);animation:pulse 1.5s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
 /* Banners */
@@ -78,7 +82,10 @@ a{color:inherit;text-decoration:none}
 <div class="container">
   <div class="header">
     <h1>APoW DASHBOARD</h1>
-    <div class="status"><span class="pulse" id="statusDot"></span><span id="statusText">Loading...</span></div>
+    <div class="header-actions">
+      <button class="refresh-btn" id="refreshBtn" type="button">Refresh</button>
+      <div class="status"><span class="pulse" id="statusDot"></span><span id="statusText">Loading...</span></div>
+    </div>
   </div>
   <div id="rpcWarning" class="rpc-warning" style="display:none">
     Set <code>RPC_URL</code> in your <code>.env</code> for reliable dashboard refreshes.
@@ -95,7 +102,7 @@ a{color:inherit;text-decoration:none}
       <div><code>apow dashboard add &lt;address&gt;</code> <span>— add a specific address</span></div>
       <div><code>apow dashboard scan</code> <span>— auto-detect from wallet files in current dir</span></div>
     </div>
-    <p class="hint">Wallets are also auto-detected from your .env PRIVATE_KEY on dashboard start.</p>
+    <p class="hint">Wallets are also auto-detected from your unlocked CLI wallet on dashboard start.</p>
   </div>
   <div id="loading" class="loading">Loading...</div>
 </div>
@@ -284,13 +291,27 @@ a{color:inherit;text-decoration:none}
   var networkData = null;
   var walletsData = null;
   var hasError = false;
+  var isRefreshing = false;
 
   function setStatus(refreshing) {
+    var btn = document.getElementById('refreshBtn');
     document.getElementById('statusDot').style.display = refreshing ? 'inline-block' : 'none';
-    document.getElementById('statusText').textContent = refreshing ? 'Refreshing...' : 'Live';
+    document.getElementById('statusText').textContent = refreshing ? 'Refreshing...' : 'Manual';
+    if (btn) {
+      btn.disabled = refreshing;
+      btn.textContent = refreshing ? 'Refreshing...' : 'Refresh';
+    }
+  }
+
+  function setReadyStatus() {
+    var now = new Date();
+    var ts = now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    document.getElementById('statusText').textContent = 'Updated ' + ts;
   }
 
   function refresh() {
+    if (isRefreshing) return;
+    isRefreshing = true;
     setStatus(true);
     var fleetParam = encodeURIComponent(activeFleet);
     Promise.all([
@@ -314,16 +335,19 @@ a{color:inherit;text-decoration:none}
       renderFleetTabs(fleets);
       renderStats(walletsData, networkData);
       renderWallets(walletsData);
+      isRefreshing = false;
       setStatus(false);
+      setReadyStatus();
     }).catch(function() {
       document.getElementById('loading').style.display = 'none';
       document.getElementById('errorBanner').style.display = 'block';
+      isRefreshing = false;
       setStatus(false);
     });
   }
 
+  document.getElementById('refreshBtn').addEventListener('click', refresh);
   refresh();
-  setInterval(refresh, 30000);
 })();
 </script>
 </body>

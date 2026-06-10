@@ -1,6 +1,6 @@
 # APoW CLI
 
-Mining client for the [APoW (Agentic Proof of Work)](https://github.com/Agentoshi/apow-core) protocol on Base. Prove you're an AI agent once by minting an ERC-721 Mining Rig, then compete on hash power to mine $AGENT tokens.
+Mining client for the [APoW (Agentic Proof of Work)](https://github.com/Agentoshi/apow-core) protocol on Base. Mint or buy an ERC-721 Mining Rig, then compete on hash power while each mine submits lightweight SMHL plus a Keccak proof to earn $AGENT tokens.
 
 **Your agent does all the work. You just fund a wallet.**
 
@@ -44,7 +44,7 @@ npx apow-cli start
 Easy Mode writes an `.env` equivalent to:
 
 ```bash
-PRIVATE_KEY=0x...
+KEYSTORE_PATH=~/.apow/keystores/wallet-0x....json
 USE_X402=true
 USE_X402_GRIND=true
 LLM_PROVIDER=clawrouter
@@ -52,16 +52,18 @@ LLM_MODEL=blockrun/eco
 ALLOW_LOCAL_FALLBACK_WITH_X402=false
 ```
 
+The keystore password is prompted interactively. For headless agents or launch services, provide `KEYSTORE_PASSWORD` from your shell, process manager, or secret store.
+
 **Scale up** with multiple wallets from a single funded wallet:
 
 ```bash
 # Generate sub-wallets and fund them from your main wallet
-npx apow-cli wallet new                    # → sub-wallet address
+npx apow-cli wallet new                    # → sub-wallet address + encrypted keystore path
 npx apow-cli wallet fund <sub-address>     # sends mint price + gas from main wallet
 
 # Mint + mine with each sub-wallet
-PRIVATE_KEY=<sub-key> npx apow-cli mint
-PRIVATE_KEY=<sub-key> npx apow-cli mine &
+KEYSTORE_PATH=<sub-keystore> npx apow-cli mint
+KEYSTORE_PATH=<sub-keystore> npx apow-cli mine &
 ```
 
 Each wallet gets one rig, each rig mines independently. More wallets = more chances to win each block. See [skill.md](skill.md) for the complete autonomous guide.
@@ -83,23 +85,23 @@ If you want to control each step manually, the older step-by-step flow is still 
 | `apow start` | Guided happy path: setup -> funding checks -> mint -> mine |
 | `apow setup` | Agent-first setup wizard: Easy Mode (x402 everywhere) or Advanced Mode |
 | `apow fund` | Fund your wallet: bridge from Solana/Ethereum or send on Base, auto-split ETH+USDC |
-| `apow wallet new` | Generate a new mining wallet, plus optional encrypted JSON keystore backup |
+| `apow wallet new` | Generate a new encrypted mining wallet |
 | `apow wallet show` | Show configured wallet address |
-| `apow wallet export` | Export your wallet's private key and optional backups |
+| `apow wallet export` | Export your wallet's private key only with explicit confirmation or `--show-private-key` |
 | `apow wallet fund <addr> [eth]` | Send ETH to another address (default: mint price + gas) |
 | `apow mint` | Mint a MiningAgent NFT (one per wallet) |
 | `apow mine [tokenId]` | Mine $AGENT with your NFT (auto-detects best rig) |
 | `apow stats [tokenId]` | View mining stats, earnings, difficulty |
 | `apow dashboard start` | Launch multi-wallet mining dashboard |
 | `apow dashboard add <addr>` | Add a wallet to the dashboard |
-| `apow dashboard scan [dir]` | Auto-detect `wallet-0x*.txt` and `wallet-0x*.json` files in a directory |
+| `apow dashboard scan [dir]` | Auto-detect encrypted `wallet-0x*.json` files and legacy `wallet-0x*.txt` import helpers by filename |
 
 ## Configuration
 
 Create a `.env` file or use `apow setup`:
 
 ```bash
-PRIVATE_KEY=0x...              # Your wallet private key
+KEYSTORE_PATH=~/.apow/keystores/wallet-0x....json  # Preferred: encrypted wallet JSON
 USE_X402=true                  # Auto-pay RPC + LLM via x402 (2.00 USDC minimum starting balance, zero API keys)
 USE_X402_GRIND=true            # Auto-pay remote GPU grinding via x402
 ALLOW_LOCAL_FALLBACK_WITH_X402=false  # Easy Mode default: do not burn local CPU while x402 GPU is active
@@ -108,7 +110,8 @@ ALLOW_LOCAL_FALLBACK_WITH_X402=false  # Easy Mode default: do not burn local CPU
 # LLM_PROVIDER=clawrouter     # clawrouter (auto with x402) | openai | gemini | deepseek | qwen | anthropic | ollama (for minting)
 # LLM_MODEL=blockrun/eco      # Auto-detected per provider; override only if needed
 # LLM_API_KEY=sk-...          # Not needed with clawrouter/ollama; required for openai/gemini/etc.
-# KEYSTORE_PASSWORD=...       # Optional: create encrypted wallet JSON backups during wallet new/export
+# KEYSTORE_PASSWORD=...       # Headless unlock only; prefer shell/process secret storage over committing to .env
+# PRIVATE_KEY=0x...           # Legacy/headless escape hatch. Prefer KEYSTORE_PATH for generated wallets.
 # Bridging (only for `apow fund`)
 # SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
 # ETHEREUM_RPC_URL=https://cloudflare-eth.com
@@ -122,7 +125,7 @@ See [.env.example](.env.example) for all options.
 
 ## LLM Providers (for Minting)
 
-An LLM is required to mint your Mining Rig NFT (one-time identity verification). Use a fast, non-thinking model to stay within the 20-second challenge window. Once minted, mining uses optimized algorithmic SMHL solving with no LLM needed.
+An LLM is required when minting a new Mining Rig NFT because the mint gate uses a 20-second SMHL challenge. Secondary-purchased rigs can mine without minting. Mining still submits SMHL every time, but the CLI solves mining SMHL algorithmically with no LLM call.
 
 | Provider | Model | Cost/call | Notes |
 |----------|-------|-----------|-------|
@@ -212,17 +215,17 @@ The CUDA grinder runs over SSH alongside your local Metal/CPU grinders — genui
 
 ### Other Optimizations
 
-- **Algorithmic SMHL**: Mining SMHL challenges are solved algorithmically in microseconds (no LLM call). Your AI was already proven when you minted your Mining Rig.
+- **Algorithmic SMHL**: Mining SMHL challenges are solved algorithmically in microseconds (no LLM call), then submitted on-chain with the hash proof.
 - **Faster stale restarts**: The miner re-checks the challenge every 5 seconds by default and aborts dead work quickly across local, native GPU/CPU, and x402 grinding.
 - **JS threads**: If no native grinders are found, falls back to `worker_threads` across all CPU cores. Set `MINER_THREADS` in `.env` to override.
 
 ## Dashboard
 
-Monitor your entire mining fleet from a single web UI. Zero external dependencies -- vanilla HTML/JS served by the CLI.
+Monitor your entire mining fleet from a single web UI. Zero external dependencies -- vanilla HTML/JS served by the CLI. The dashboard loads once, then only refreshes chain data when you click **Refresh** or switch fleets, so it does not burn RPC quota in the background.
 
 ```bash
 # Quick start: scan wallet files and launch
-apow dashboard scan .          # detect wallet-0x*.txt / .json files in current directory
+apow dashboard scan .          # detect wallet-0x*.json and legacy .txt filenames in current directory
 apow dashboard start           # open dashboard at http://localhost:3847
 ```
 
@@ -233,7 +236,7 @@ apow dashboard start           # open dashboard at http://localhost:3847
 | `apow dashboard start` | Launch dashboard web UI (default port 3847) |
 | `apow dashboard add <addr>` | Add a wallet address to monitor |
 | `apow dashboard remove <addr>` | Remove a wallet from monitoring |
-| `apow dashboard scan [dir]` | Auto-detect wallets from `wallet-0x*.txt` and `wallet-0x*.json` files |
+| `apow dashboard scan [dir]` | Auto-detect wallets from encrypted `wallet-0x*.json` files and legacy `wallet-0x*.txt` import helpers |
 | `apow dashboard wallets` | List all monitored wallets |
 
 ### Fleet Configuration
@@ -248,7 +251,9 @@ Wallets are stored in `~/.apow/wallets.json` (plain JSON array of addresses). Fo
 ]
 ```
 
-Fleet types: `array` (JSON array of addresses), `solkek` (master/miners JSON), `rigdirs` (scan `rig*/wallet-0x*.txt` / `.json`), `walletfiles` (scan `wallet-0x*.txt` / `.json`).
+Fleet types: `array` (JSON array of addresses), `solkek` (master/miners JSON), `rigdirs` (scan `rig*/wallet-0x*.json` or legacy `.txt` filenames), `walletfiles` (scan `wallet-0x*.json` or legacy `.txt` filenames).
+
+Refreshes use chunked multicalls and a 25-second cache. Clicking **Refresh** after the cache expires waits for a fresh RPC read; clicking again inside the cache window reuses the current data.
 
 ## Protocol
 

@@ -1,12 +1,17 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 import { Keystore } from "ox";
 
 function ensureDir(path: string): void {
   if (!existsSync(path)) {
-    mkdirSync(path, { recursive: true });
+    mkdirSync(path, { recursive: true, mode: 0o700 });
+  }
+  try {
+    chmodSync(path, 0o700);
+  } catch {
+    // Best-effort permissions hardening; some filesystems do not support chmod.
   }
 }
 
@@ -24,6 +29,17 @@ export function getKeystoreWalletPath(address: string): string {
   return join(getKeystoreDir(), `wallet-${address}.json`);
 }
 
+export function expandHomePath(path: string): string {
+  if (path === "~") return homedir();
+  if (path.startsWith("~/")) return join(homedir(), path.slice(2));
+  return path;
+}
+
+export function resolveKeystorePath(path: string): string {
+  const expanded = expandHomePath(path);
+  return isAbsolute(expanded) ? expanded : resolve(process.cwd(), expanded);
+}
+
 export function savePlaintextImportFile(address: string, privateKey: string, cwd = process.cwd()): string {
   const filepath = getPlaintextWalletPath(address, cwd);
   const content = [
@@ -37,6 +53,11 @@ export function savePlaintextImportFile(address: string, privateKey: string, cwd
     "",
   ].join("\n");
   writeFileSync(filepath, content, { encoding: "utf8", mode: 0o600 });
+  try {
+    chmodSync(filepath, 0o600);
+  } catch {
+    // Best-effort permissions hardening.
+  }
   return filepath;
 }
 
@@ -53,7 +74,24 @@ export async function saveEncryptedKeystoreFile(
     address: address.slice(2).toLowerCase(),
   };
   writeFileSync(filepath, JSON.stringify(payload, null, 2) + "\n", { encoding: "utf8", mode: 0o600 });
+  try {
+    chmodSync(filepath, 0o600);
+  } catch {
+    // Best-effort permissions hardening.
+  }
   return filepath;
+}
+
+export function loadEncryptedKeystoreFile(path: string, password: string): `0x${string}` {
+  const filepath = resolveKeystorePath(path);
+  const raw = readFileSync(filepath, "utf8");
+  const keystore = JSON.parse(raw) as Keystore.Keystore;
+  const key = Keystore.toKey(keystore, { password });
+  const privateKey = Keystore.decrypt(keystore, key);
+  if (!/^0x[0-9a-fA-F]{64}$/.test(privateKey)) {
+    throw new Error("Keystore decrypted, but did not contain a valid EVM private key.");
+  }
+  return privateKey as `0x${string}`;
 }
 
 export function detectWalletAddressFromFilename(filename: string): string | null {

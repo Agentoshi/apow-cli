@@ -21,7 +21,7 @@ import { runPreflight } from "./preflight";
 import { displayStats } from "./stats";
 import { warnIfUpdateAvailable } from "./update";
 import * as ui from "./ui";
-import { detectWalletAddressFromFilename, saveEncryptedKeystoreFile, savePlaintextImportFile } from "./wallet-store";
+import { detectWalletAddressFromFilename, loadEncryptedKeystoreFile, resolveKeystorePath, saveEncryptedKeystoreFile, savePlaintextImportFile } from "./wallet-store";
 import { account, getEthBalance, publicClient, reinitClients, requireWallet } from "./wallet";
 
 const miningAgentAbi = miningAgentAbiJson as Abi;
@@ -68,58 +68,105 @@ function ensureGitignoreSafetyEntries(): void {
   ui.ok(`Updated .gitignore: added ${missing.join(", ")}`);
 }
 
-async function maybeCreateEncryptedKeystoreBackup(
-  address: `0x${string}`,
-  privateKey: `0x${string}`,
-  opts: { promptIfMissingPassword?: boolean } = {},
-): Promise<string | null> {
+function getKeystorePasswordFromEnv(): string {
   const envPassword = process.env.KEYSTORE_PASSWORD?.trim();
-  let password = envPassword ?? "";
+  if (envPassword) return envPassword;
+  return process.env.APOW_KEYSTORE_PASSWORD?.trim() ?? "";
+}
 
-  if (!password && opts.promptIfMissingPassword && ui.isInteractiveSession()) {
-    const createBackup = await ui.confirm("Create encrypted JSON keystore backup? (recommended)");
-    if (!createBackup) {
-      return null;
-    }
-
-    const entered = await ui.promptSecret("Keystore password");
-    const confirm = await ui.promptSecret("Confirm keystore password");
-    if (!entered) {
-      ui.warn("No keystore password entered — skipping encrypted backup.");
-      return null;
-    }
-    if (entered !== confirm) {
-      ui.warn("Keystore passwords did not match — skipping encrypted backup.");
-      return null;
-    }
-    password = entered;
+async function getKeystorePassword(required: boolean, confirmPassword = true): Promise<string | null> {
+  const envPassword = getKeystorePasswordFromEnv();
+  if (envPassword) {
+    return envPassword;
   }
 
-  if (!password) {
+  if (!ui.isInteractiveSession()) {
+    if (required) {
+      ui.error("KEYSTORE_PASSWORD is required to create or unlock an encrypted wallet in a headless session.");
+      ui.hint("Set KEYSTORE_PASSWORD in your shell or secret manager, not in chat or command history.");
+    }
     return null;
   }
 
+  const entered = await ui.promptSecret("Keystore password");
+  if (!entered) {
+    if (required) {
+      ui.error("No keystore password entered.");
+    }
+    return null;
+  }
+  if (confirmPassword) {
+    const confirm = await ui.promptSecret("Confirm keystore password");
+    if (entered !== confirm) {
+      ui.error("Keystore passwords did not match.");
+      return null;
+    }
+  }
+  process.env.KEYSTORE_PASSWORD = entered;
+  return entered;
+}
+
+async function saveKeystoreWithPassword(
+  address: `0x${string}`,
+  privateKey: `0x${string}`,
+  password: string,
+): Promise<string> {
+  process.env.KEYSTORE_PASSWORD = password;
   return saveEncryptedKeystoreFile(address, privateKey, password);
 }
 
 async function saveWalletArtifacts(
   address: `0x${string}`,
   privateKey: `0x${string}`,
-  opts: { createPlaintextImportFile?: boolean; promptForKeystoreBackup?: boolean } = {},
+  opts: { createPlaintextImportFile?: boolean; requireKeystore?: boolean } = {},
 ): Promise<{ plaintextPath?: string; keystorePath?: string }> {
   const result: { plaintextPath?: string; keystorePath?: string } = {};
 
-  if (opts.createPlaintextImportFile !== false) {
+  if (opts.createPlaintextImportFile === true) {
     result.plaintextPath = savePlaintextImportFile(address, privateKey);
   }
 
-  const keystorePath = await maybeCreateEncryptedKeystoreBackup(address, privateKey, {
-    promptIfMissingPassword: opts.promptForKeystoreBackup === true,
-  });
-  if (keystorePath) {
-    result.keystorePath = keystorePath;
+  const password = await getKeystorePassword(opts.requireKeystore === true);
+  if (password) {
+    result.keystorePath = await saveKeystoreWithPassword(address, privateKey, password);
+  } else if (opts.requireKeystore) {
+    throw new Error("Encrypted keystore was not created.");
   }
   return result;
+}
+
+async function unlockConfiguredKeystoreIfNeeded(): Promise<boolean> {
+  if (account && config.privateKey) {
+    return true;
+  }
+
+  if (!config.keystorePath) {
+    return false;
+  }
+
+  const password = await getKeystorePassword(true, false);
+  if (!password) {
+    return false;
+  }
+
+  try {
+    loadEncryptedKeystoreFile(config.keystorePath, password);
+    reloadConfig();
+    reinitClients();
+    return !!account && !!config.privateKey;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    ui.error(`Could not unlock encrypted keystore: ${message}`);
+    return false;
+  }
+}
+
+async function confirmPrivateKeyDisplay(): Promise<boolean> {
+  if (!ui.isInteractiveSession()) {
+    return false;
+  }
+  const answer = await ui.prompt("Type SHOW to display your private key");
+  return answer === "SHOW";
 }
 
 function shouldSkipUpdateCheck(argv: string[]): boolean {
@@ -154,16 +201,37 @@ async function setupWizard(): Promise<void> {
   console.log(`  ${ui.bold(`Step 1/${totalSteps}: Wallet`)}`);
   console.log(`  ${ui.dim("Your agent can manage a wallet for you, or you can supply your own.")}`);
   console.log("");
-  console.log(`  ${ui.cyan("1.")} Agent-managed wallet ${ui.dim("(generate one now)")}`);
-  console.log(`  ${ui.cyan("2.")} Existing wallet ${ui.dim("(paste private key)")}`);
+  console.log(`  ${ui.cyan("1.")} Agent-managed encrypted wallet ${ui.dim("(generate one now)")}`);
+  console.log(`  ${ui.cyan("2.")} Existing encrypted keystore`);
+  console.log(`  ${ui.cyan("3.")} Existing private key ${ui.dim("(encrypt before saving)")}`);
   console.log("");
   const walletMode = await ui.prompt("Wallet choice", "1");
-  const useExistingWallet = walletMode === "2";
 
-  let privateKey: string;
   let addr: string;
+  let keystorePath: string | undefined;
 
-  if (useExistingWallet) {
+  if (walletMode === "2") {
+    const inputPath = await ui.prompt("Keystore path", process.env.KEYSTORE_PATH ?? "");
+    if (!inputPath) {
+      ui.error("Keystore path is required.");
+      return;
+    }
+    const password = await getKeystorePassword(true, false);
+    if (!password) {
+      return;
+    }
+    try {
+      const privateKey = loadEncryptedKeystoreFile(inputPath, password);
+      const { privateKeyToAccount } = await import("viem/accounts");
+      const walletAccount = privateKeyToAccount(privateKey);
+      addr = walletAccount.address;
+      keystorePath = resolveKeystorePath(inputPath);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      ui.error(`Could not unlock keystore: ${message}`);
+      return;
+    }
+  } else if (walletMode === "3") {
     const inputKey = await ui.promptSecret("Private key (0x-prefixed)");
     if (!inputKey) {
       ui.error("Private key is required.");
@@ -173,46 +241,44 @@ async function setupWizard(): Promise<void> {
       ui.error("Invalid private key format. Must be 0x + 64 hex characters.");
       return;
     }
-    privateKey = inputKey;
     const { privateKeyToAccount } = await import("viem/accounts");
-    const walletAccount = privateKeyToAccount(privateKey as `0x${string}`);
+    const walletAccount = privateKeyToAccount(inputKey as `0x${string}`);
     addr = walletAccount.address;
+    const password = await getKeystorePassword(true);
+    if (!password) {
+      return;
+    }
+    keystorePath = await saveKeystoreWithPassword(addr as `0x${string}`, inputKey as `0x${string}`, password);
+    console.log("");
+    console.log(`  ${ui.dim(`Encrypted keystore saved to: ${keystorePath}`)}`);
   } else {
+    const password = await getKeystorePassword(true);
+    if (!password) {
+      return;
+    }
     const { generatePrivateKey, privateKeyToAccount } = await import("viem/accounts");
-    privateKey = generatePrivateKey();
-    const walletAccount = privateKeyToAccount(privateKey as `0x${string}`);
+    const privateKey = generatePrivateKey();
+    const walletAccount = privateKeyToAccount(privateKey);
     addr = walletAccount.address;
+    keystorePath = await saveKeystoreWithPassword(addr as `0x${string}`, privateKey, password);
 
     console.log("");
     console.log(`  ${ui.bold("NEW WALLET GENERATED")}`);
     console.log("");
     console.log(`  Address:     ${addr}`);
-    console.log(`  Private Key: ${privateKey}`);
-    console.log("");
-    console.log(`  ${ui.yellow("⚠ SAVE YOUR PRIVATE KEY — this is the only time")}`);
-    console.log(`  ${ui.yellow("  it will be displayed. Anyone with this key")}`);
-    console.log(`  ${ui.yellow("  controls your funds.")}`);
+    console.log(`  Keystore:    ${keystorePath}`);
     console.log("");
     console.log(`  ${ui.dim("Import into Phantom, MetaMask, or any EVM wallet")}`);
-    console.log(`  ${ui.dim("to view your AGENT tokens and Mining Rig NFT.")}`);
+    console.log(`  ${ui.dim("later with: apow wallet export --show-private-key")}`);
     console.log("");
     console.log(`  ${ui.dim("Fund this address with ≥0.005 ETH on Base to start.")}`);
     console.log("");
-
-    const artifacts = await saveWalletArtifacts(addr as `0x${string}`, privateKey as `0x${string}`);
-    if (artifacts.plaintextPath) {
-      console.log(`  ${ui.dim(`Import helper saved to: ${artifacts.plaintextPath}`)}`);
-      console.log(`  ${ui.yellow("This plaintext file is easy to import, but less secure than an encrypted keystore.")}`);
-    }
-    if (artifacts.keystorePath) {
-      console.log(`  ${ui.dim(`Encrypted keystore saved to: ${artifacts.keystorePath}`)}`);
-    } else {
-      console.log(`  ${ui.dim("Tip: set KEYSTORE_PASSWORD or rerun wallet export to create an encrypted JSON keystore backup.")}`);
-    }
-    console.log("");
   }
 
-  values.PRIVATE_KEY = privateKey;
+  values.PRIVATE_KEY = "";
+  if (keystorePath) {
+    values.KEYSTORE_PATH = keystorePath;
+  }
   ui.ok(`Wallet: ${addr.slice(0, 6)}...${addr.slice(-4)}`);
   console.log("");
 
@@ -371,6 +437,8 @@ function showHeadlessFundingHandoff(address: `0x${string}`, needsEth: boolean, n
 }
 
 async function runStartFlow(): Promise<void> {
+  await unlockConfiguredKeystoreIfNeeded();
+
   if (!config.privateKey || !account) {
     console.log("");
     ui.warn("No wallet configured — launching setup.");
@@ -384,8 +452,8 @@ async function runStartFlow(): Promise<void> {
     return;
   }
 
-  const bootstrapClient = config.useX402 && config.chainName === "base"
-    ? createPublicClient({ chain: config.chain, transport: http("https://1rpc.io/base") })
+  const bootstrapClient = config.useX402 && config.chainName === "base" && config.rpcUrl
+    ? createPublicClient({ chain: config.chain, transport: http(config.rpcUrl) })
     : publicClient;
 
   console.log("");
@@ -513,6 +581,7 @@ async function main(): Promise<void> {
     .option("--amount <eth>", "Target ETH amount (default: 0.005)")
     .option("--no-swap", "Skip auto-split after bridging")
     .action(async (opts: { chain?: string; token?: string; amount?: string; swap?: boolean }) => {
+      await unlockConfiguredKeystoreIfNeeded();
       if (!config.privateKey || !account) {
         ui.warn("No wallet configured — launching setup first.");
         await setupWizard();
@@ -530,6 +599,7 @@ async function main(): Promise<void> {
     .command("mint")
     .description("Mint a new miner NFT (Easy Mode: x402 LLM, no API key)")
     .action(async () => {
+      await unlockConfiguredKeystoreIfNeeded();
       if (!config.privateKey || !account) {
         ui.warn("No wallet configured — launching setup first.");
         await setupWizard();
@@ -549,6 +619,7 @@ async function main(): Promise<void> {
     .description("Start the mining loop (Easy Mode: remote x402 GPU)")
     .argument("[tokenId]", "Miner token ID (auto-detects if omitted)")
     .action(async (tokenIdArg?: string) => {
+      await unlockConfiguredKeystoreIfNeeded();
       const hasWallet = !!config.privateKey && !!account;
       const hasRpc = config.useX402 || !!config.rpcUrl;
 
@@ -632,30 +703,41 @@ async function main(): Promise<void> {
 
   walletCmd
     .command("new")
-    .description("Generate a new Base wallet (prints key and saves to file)")
-    .action(async () => {
+    .description("Generate a new encrypted Base wallet")
+    .option("--show-private-key", "Print the private key after generation (unsafe except for immediate import)")
+    .option("--plaintext", "Also save a plaintext wallet-<address>.txt import helper")
+    .action(async (opts: { showPrivateKey?: boolean; plaintext?: boolean }) => {
+      const password = await getKeystorePassword(true);
+      if (!password) {
+        return;
+      }
+
       const { generatePrivateKey, privateKeyToAccount } = await import("viem/accounts");
       const key = generatePrivateKey();
       const acct = privateKeyToAccount(key);
+      const artifacts = await saveWalletArtifacts(acct.address, key, {
+        createPlaintextImportFile: opts.plaintext === true,
+        requireKeystore: true,
+      });
+
       console.log("");
       console.log(`  ${ui.bold("NEW WALLET GENERATED")}`);
       console.log("");
       console.log(`  Address:     ${acct.address}`);
-      console.log(`  Private Key: ${key}`);
-      console.log("");
-      console.log(`  ${ui.yellow("⚠ SAVE YOUR PRIVATE KEY — this is the only time")}`);
-      console.log(`  ${ui.yellow("  it will be displayed. Anyone with this key")}`);
-      console.log(`  ${ui.yellow("  controls your funds.")}`);
-      console.log("");
-      const artifacts = await saveWalletArtifacts(acct.address, key);
-      if (artifacts.plaintextPath) {
-        console.log(`  ${ui.dim(`Import helper saved to: ${artifacts.plaintextPath}`)}`);
-        console.log(`  ${ui.yellow("This plaintext file is easy to import, but less secure than an encrypted keystore.")}`);
-      }
       if (artifacts.keystorePath) {
-        console.log(`  ${ui.dim(`Encrypted keystore saved to: ${artifacts.keystorePath}`)}`);
+        console.log(`  Keystore:    ${artifacts.keystorePath}`);
+      }
+      console.log("");
+
+      if (opts.showPrivateKey) {
+        console.log(`  Private Key: ${key}`);
+        console.log("");
+        console.log(`  ${ui.yellow("WARNING: anyone with this key controls your funds.")}`);
       } else {
-        console.log(`  ${ui.dim("Tip: set KEYSTORE_PASSWORD or rerun wallet export to create an encrypted JSON keystore backup.")}`);
+        console.log(`  ${ui.dim("Private key hidden. Export later with: apow wallet export --show-private-key")}`);
+      }
+      if (artifacts.plaintextPath) {
+        console.log(`  ${ui.yellow(`Plaintext import helper saved to: ${artifacts.plaintextPath}`)}`);
       }
       console.log("");
       console.log(`  ${ui.dim("Import into Phantom, MetaMask, or any EVM wallet")}`);
@@ -665,41 +747,62 @@ async function main(): Promise<void> {
 
   walletCmd
     .command("show")
-    .description("Show wallet address from current .env PRIVATE_KEY")
+    .description("Show configured wallet address")
     .action(async () => {
+      await unlockConfiguredKeystoreIfNeeded();
       if (!account) {
-        ui.error("No wallet configured. Run `apow setup` and choose Easy Mode, or set PRIVATE_KEY in .env.");
+        ui.error("No wallet configured. Run `apow setup` and choose Easy Mode, or set KEYSTORE_PATH or PRIVATE_KEY in .env.");
         return;
       }
       console.log("");
       console.log(`  Address: ${account.address}`);
+      if (config.walletSource === "keystore" && config.keystorePath) {
+        console.log(`  Source:  encrypted keystore (${config.keystorePath})`);
+      } else if (config.walletSource === "private-key") {
+        console.log("  Source:  legacy PRIVATE_KEY");
+      }
       console.log("");
     });
 
   walletCmd
     .command("export")
-    .description("Export wallet private key (with confirmation)")
-    .action(async () => {
+    .description("Export wallet private key or create backup artifacts")
+    .option("--show-private-key", "Display the decrypted private key")
+    .option("--plaintext", "Save a plaintext wallet-<address>.txt import helper")
+    .option("--keystore", "Write or refresh the encrypted keystore backup")
+    .action(async (opts: { showPrivateKey?: boolean; plaintext?: boolean; keystore?: boolean }) => {
+      await unlockConfiguredKeystoreIfNeeded();
       if (!account || !config.privateKey) {
-        ui.error("No wallet configured. Run `apow setup` and choose Easy Mode, or set PRIVATE_KEY in .env.");
+        ui.error("No wallet configured. Run `apow setup` and choose Easy Mode, or set KEYSTORE_PATH or PRIVATE_KEY in .env.");
         return;
       }
 
-      const proceed = await ui.confirm("This will display your private key. Continue?");
-      if (!proceed) {
-        console.log("  Cancelled.");
+      const shouldPrintKey = opts.showPrivateKey === true
+        || (await confirmPrivateKeyDisplay());
+      if (!shouldPrintKey && !opts.plaintext && !opts.keystore) {
+        console.log("");
+        console.log(`  Address: ${account.address}`);
+        if (config.keystorePath) {
+          console.log(`  Keystore: ${config.keystorePath}`);
+        }
+        console.log(`  ${ui.dim("Use --show-private-key only when you need to import the wallet elsewhere.")}`);
+        console.log("");
         return;
       }
 
       console.log("");
       console.log(`  Address:     ${account.address}`);
-      console.log(`  Private Key: ${config.privateKey}`);
+      if (shouldPrintKey) {
+        console.log(`  Private Key: ${config.privateKey}`);
+        console.log(`  ${ui.yellow("WARNING: anyone with this key controls your funds.")}`);
+      }
       console.log("");
 
-      const savePlaintext = await ui.confirm("Save plaintext import helper?");
+      const savePlaintext = opts.plaintext === true
+        || (ui.isInteractiveSession() && await ui.confirm("Save plaintext import helper?"));
       const artifacts = await saveWalletArtifacts(account.address, config.privateKey, {
         createPlaintextImportFile: savePlaintext,
-        promptForKeystoreBackup: true,
+        requireKeystore: opts.keystore === true,
       });
       if (artifacts.plaintextPath) {
         console.log(`  ${ui.dim(`Saved import helper: ${artifacts.plaintextPath}`)}`);
@@ -716,6 +819,7 @@ async function main(): Promise<void> {
     .argument("<address>", "Destination address (0x-prefixed)")
     .argument("[amount]", "ETH amount to send (default: mint price + 0.003 ETH gas buffer)")
     .action(async (address: string, amountArg?: string) => {
+      await unlockConfiguredKeystoreIfNeeded();
       if (!config.privateKey || !account) {
         ui.warn("No wallet configured — launching setup first.");
         await setupWizard();

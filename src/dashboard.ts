@@ -1,7 +1,7 @@
 import * as http from "node:http";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { createPublicClient, formatEther, http as viemHttp, type Abi, type Address, type Transport } from "viem";
+import { createPublicClient, formatEther, getAddress, http as viemHttp, type Abi, type Address, type Transport } from "viem";
 import { base } from "viem/chains";
 import { getDashboardHtml } from "./dashboard-html";
 import { createX402Transport } from "./x402";
@@ -62,28 +62,31 @@ export interface DashboardOpts {
 
 // --- Wallet / Fleet loading ---
 
-function isAddress(s: string): s is Address {
-  return ADDR_RE.test(s);
+function normalizeAddress(s: string): Address | null {
+  if (!ADDR_RE.test(s)) return null;
+  return getAddress(s.toLowerCase()) as Address;
 }
 
 function extractArray(path: string): Address[] {
   const raw = readFileSync(path, "utf8");
   const data = JSON.parse(raw);
   if (!Array.isArray(data)) return [];
-  return data.filter((a): a is Address => typeof a === "string" && isAddress(a));
+  return data.flatMap((a) => (typeof a === "string" ? normalizeAddress(a) ?? [] : []));
 }
 
 function extractSolkek(path: string): Address[] {
   const raw = readFileSync(path, "utf8");
   const data = JSON.parse(raw);
   const addrs: Address[] = [];
-  if (data.master?.address && isAddress(data.master.address)) {
-    addrs.push(data.master.address as Address);
+  const masterAddress = typeof data.master?.address === "string" ? normalizeAddress(data.master.address) : null;
+  if (masterAddress) {
+    addrs.push(masterAddress);
   }
   if (Array.isArray(data.miners)) {
     for (const m of data.miners) {
-      if (m.address && isAddress(m.address)) {
-        addrs.push(m.address as Address);
+      const address = typeof m.address === "string" ? normalizeAddress(m.address) : null;
+      if (address) {
+        addrs.push(address);
       }
     }
   }
@@ -98,8 +101,9 @@ function extractRigdirs(dir: string): Address[] {
     const rigFiles = readdirSync(join(dir, entry.name));
     for (const file of rigFiles) {
       const address = detectWalletAddressFromFilename(file);
-      if (address && isAddress(address)) {
-        addrs.push(address as Address);
+      const normalized = address ? normalizeAddress(address) : null;
+      if (normalized) {
+        addrs.push(normalized);
       }
     }
   }
@@ -111,8 +115,9 @@ function extractWalletfiles(dir: string): Address[] {
   const files = readdirSync(dir);
   for (const file of files) {
     const address = detectWalletAddressFromFilename(file);
-    if (address && isAddress(address)) {
-      addrs.push(address as Address);
+    const normalized = address ? normalizeAddress(address) : null;
+    if (normalized) {
+      addrs.push(normalized);
     }
   }
   return addrs;
@@ -154,7 +159,7 @@ function getWalletAddresses(walletsPath: string): Address[] {
     const raw = readFileSync(walletsPath, "utf8");
     const data = JSON.parse(raw);
     if (Array.isArray(data)) {
-      return data.filter((addr): addr is Address => typeof addr === "string" && ADDR_RE.test(addr));
+      return data.flatMap((addr) => (typeof addr === "string" ? normalizeAddress(addr) ?? [] : []));
     }
     return [];
   } catch {
@@ -215,10 +220,11 @@ export function startDashboardServer(opts: DashboardOpts): http.Server {
   const artCache = new Map<string, string>();
   const htmlPage = getDashboardHtml();
 
-  // Response cache with TTL — always serve cached data, refresh in background
+  // Response cache with TTL. Manual refreshes wait for fresh stale data instead of
+  // returning old values and silently updating after the UI has already rendered.
   const responseCache = new Map<string, { data: string; ts: number }>();
   const pendingFetches = new Map<string, Promise<string>>();
-  const CACHE_TTL = 25_000; // 25s — slightly less than client's 30s poll
+  const CACHE_TTL = 25_000;
 
   async function cachedHandler(key: string, handler: () => Promise<string>): Promise<string> {
     const cached = responseCache.get(key);
@@ -226,7 +232,6 @@ export function startDashboardServer(opts: DashboardOpts): http.Server {
     const isStale = !cached || (now - cached.ts > CACHE_TTL);
 
     if (isStale && !pendingFetches.has(key)) {
-      // Fetch fresh data (non-blocking if we have stale data to return)
       const fetchPromise = handler()
         .then((result) => {
           responseCache.set(key, { data: result, ts: Date.now() });
@@ -239,17 +244,14 @@ export function startDashboardServer(opts: DashboardOpts): http.Server {
           throw err;
         });
       pendingFetches.set(key, fetchPromise);
-
-      // No cached data yet — must wait for first fetch
-      if (!cached) return fetchPromise;
     }
 
-    // If we have a pending fetch and no cache, wait for it
-    if (!cached && pendingFetches.has(key)) {
+    // Stale manual refreshes should wait for the in-flight read so the button
+    // actually returns current balances.
+    if (isStale && pendingFetches.has(key)) {
       return pendingFetches.get(key)!;
     }
 
-    // Return cached data immediately (even if stale — background refresh handles it)
     return cached ? cached.data : "{}";
   }
 

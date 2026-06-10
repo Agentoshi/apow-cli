@@ -6,15 +6,21 @@ import { join } from "node:path";
 import type { Address, Chain, Hex } from "viem";
 import { base, baseSepolia } from "viem/chains";
 
+import { loadEncryptedKeystoreFile, resolveKeystorePath } from "./wallet-store";
+
 loadEnv({ quiet: true });
 
 export type LlmProvider = "openai" | "anthropic" | "ollama" | "gemini" | "claude-code" | "codex" | "deepseek" | "qwen" | "clawrouter";
 export type ChainName = "base" | "baseSepolia";
+export type WalletSource = "private-key" | "keystore" | "none";
 
 export type GrinderMode = "auto" | "js";
 
 export interface AppConfig {
   privateKey?: Hex;
+  keystorePath?: string;
+  walletSource: WalletSource;
+  walletLoadError?: string;
   rpcUrl: string;
   useX402: boolean;
   llmProvider: LlmProvider;
@@ -90,7 +96,7 @@ function resolveChainName(): ChainName {
 }
 
 function parsePrivateKey(value?: string): Hex | undefined {
-  if (!value) {
+  if (!value?.trim()) {
     return undefined;
   }
 
@@ -99,6 +105,59 @@ function parsePrivateKey(value?: string): Hex | undefined {
   }
 
   return value as Hex;
+}
+
+function resolveKeystorePassword(): string {
+  return process.env.KEYSTORE_PASSWORD?.trim()
+    || process.env.APOW_KEYSTORE_PASSWORD?.trim()
+    || "";
+}
+
+function getConfiguredKeystorePath(): string | undefined {
+  const value = process.env.KEYSTORE_PATH
+    || process.env.WALLET_KEYSTORE_PATH
+    || process.env.APOW_KEYSTORE_PATH;
+  if (!value?.trim()) {
+    return undefined;
+  }
+  return resolveKeystorePath(value.trim());
+}
+
+function resolveWalletConfig(): Pick<AppConfig, "privateKey" | "keystorePath" | "walletSource" | "walletLoadError"> {
+  const legacyPrivateKey = parsePrivateKey(process.env.PRIVATE_KEY);
+  const keystorePath = getConfiguredKeystorePath();
+
+  if (legacyPrivateKey) {
+    return {
+      privateKey: legacyPrivateKey,
+      keystorePath,
+      walletSource: "private-key",
+    };
+  }
+
+  if (!keystorePath) {
+    return { walletSource: "none" };
+  }
+
+  const password = resolveKeystorePassword();
+  if (!password) {
+    return {
+      keystorePath,
+      walletSource: "keystore",
+      walletLoadError: "Encrypted keystore is configured but locked. Set KEYSTORE_PASSWORD in your shell or run an interactive command to unlock it.",
+    };
+  }
+
+  try {
+    return {
+      privateKey: loadEncryptedKeystoreFile(keystorePath, password),
+      keystorePath,
+      walletSource: "keystore",
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Could not unlock KEYSTORE_PATH (${keystorePath}): ${message}`);
+  }
 }
 
 function parseAddress(envKey: string, fallback: Address | undefined): Address {
@@ -142,13 +201,17 @@ function buildConfig(): AppConfig {
   const chainName = resolveChainName();
   const useX402 = process.env.USE_X402 === "true";
   const resolvedProvider = normalizeProvider(process.env.LLM_PROVIDER, useX402);
+  const walletConfig = resolveWalletConfig();
   const useX402Grind = process.env.USE_X402_GRIND !== undefined
     ? process.env.USE_X402_GRIND === "true"
     : useX402;
   const allowLocalFallbackWithX402 = process.env.ALLOW_LOCAL_FALLBACK_WITH_X402 === "true";
 
   return {
-    privateKey: parsePrivateKey(process.env.PRIVATE_KEY),
+    privateKey: walletConfig.privateKey,
+    keystorePath: walletConfig.keystorePath,
+    walletSource: walletConfig.walletSource,
+    walletLoadError: walletConfig.walletLoadError,
     rpcUrl: process.env.RPC_URL ?? "",
     useX402,
     llmProvider: resolvedProvider,
@@ -184,7 +247,7 @@ export function reloadConfig(): AppConfig {
 
 export function requirePrivateKey(): Hex {
   if (!config.privateKey) {
-    throw new Error("PRIVATE_KEY is required for minting and mining commands.");
+    throw new Error("An unlocked wallet signer is required. Configure KEYSTORE_PATH plus KEYSTORE_PASSWORD, or use legacy PRIVATE_KEY.");
   }
 
   return config.privateKey;

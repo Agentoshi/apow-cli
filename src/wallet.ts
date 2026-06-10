@@ -6,7 +6,6 @@ import { config } from "./config";
 import { createX402Transport } from "./x402";
 
 const DATA_SUFFIX = Attribution.toDataSuffix({ codes: ["bc_6wfeb1kd"] });
-const BASE_BOOTSTRAP_RPC_URL = "https://mainnet.base.org";
 
 function getTransport(): Transport {
   if (config.useX402 && config.privateKey) {
@@ -37,7 +36,7 @@ export let walletClient = account
 
 let bootstrapPublicClient = createPublicClient({
   chain: config.chain,
-  transport: http(BASE_BOOTSTRAP_RPC_URL),
+  transport: getBootstrapTransport(),
 });
 
 let bootstrapAccount = config.privateKey
@@ -48,13 +47,17 @@ let bootstrapWalletClient = bootstrapAccount
   ? createWalletClient({
       account: bootstrapAccount,
       chain: config.chain,
-      transport: http(BASE_BOOTSTRAP_RPC_URL),
+      transport: getBootstrapTransport(),
       dataSuffix: DATA_SUFFIX,
     })
   : null;
 
 function shouldUseBootstrapFundingClients(): boolean {
-  return config.useX402 && config.chainName === "base";
+  return config.useX402 && config.chainName === "base" && !!config.rpcUrl;
+}
+
+function getBootstrapTransport(): Transport {
+  return config.rpcUrl ? http(config.rpcUrl) : transport;
 }
 
 /** Reinitialize clients after config changes (e.g., x402 fallback). */
@@ -75,7 +78,7 @@ export function reinitClients(): void {
 
   bootstrapPublicClient = createPublicClient({
     chain: config.chain,
-    transport: http(BASE_BOOTSTRAP_RPC_URL),
+    transport: getBootstrapTransport(),
   });
   bootstrapAccount = config.privateKey
     ? privateKeyToAccount(config.privateKey)
@@ -84,7 +87,7 @@ export function reinitClients(): void {
     ? createWalletClient({
         account: bootstrapAccount,
         chain: config.chain,
-        transport: http(BASE_BOOTSTRAP_RPC_URL),
+        transport: getBootstrapTransport(),
         dataSuffix: DATA_SUFFIX,
       })
     : null;
@@ -104,7 +107,7 @@ export function getFundingClients() {
 
 export function requireWallet() {
   if (!account || !walletClient) {
-    throw new Error("Wallet is not configured. Set PRIVATE_KEY in .env.");
+    throw new Error("Wallet is not configured. Set KEYSTORE_PATH for an encrypted keystore or legacy PRIVATE_KEY in .env.");
   }
 
   return { account, walletClient };

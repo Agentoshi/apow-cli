@@ -20,7 +20,7 @@ and mine autonomously. The only step that requires your user is funding the wall
 on Base. Everything else you handle yourself.
 
 > **Mode guide**
-> - **Easy Mode** (recommended / beginner path): run `npx apow-cli start` or `npx apow-cli setup`, choose `Easy Mode`, let the CLI generate a wallet and private key if needed, then hand the user the funding address. No API keys or pre-existing `PRIVATE_KEY` are required up front.
+> - **Easy Mode** (recommended / beginner path): run `npx apow-cli start` or `npx apow-cli setup`, choose `Easy Mode`, let the CLI generate an encrypted wallet if needed, then hand the user the funding address. No API keys or pre-existing `PRIVATE_KEY` are required up front.
 > - **Advanced Mode:** bring your own wallet, RPC, LLM, and grinder settings via `.env` or the interactive setup flow.
 
 ---
@@ -49,7 +49,7 @@ npx apow-cli start
 ```
 
 1. Choose `Easy Mode`
-2. If no wallet exists yet, let the CLI generate it and show the new Base address
+2. If no wallet exists yet, let the CLI generate an encrypted keystore and show the new Base address
 3. Hand the funding address to the user and explain they need ETH for gas + minting and USDC for the x402 stack
 4. If they want the built-in bridge, use `npx apow-cli fund`; otherwise let them fund the wallet manually
 5. After funding arrives, rerun `npx apow-cli start` to continue through minting and mining
@@ -63,14 +63,15 @@ Only use this if the environment cannot drive the interactive CLI prompts. This 
 same zero-credential x402 stack that Easy Mode would write for you.
 
 ```bash
-# 1. Generate a wallet
+# 1. Generate an encrypted wallet
+export KEYSTORE_PASSWORD=<keystore-password-from-secret-manager>
 npx apow-cli wallet new
-# Captures address + private key from output (and can save a plaintext import helper plus encrypted keystore)
+# Captures address + encrypted keystore path. The private key is hidden by default.
 
 # 2. Write .env directly — headless fallback for Easy Mode
 # Contract addresses are built-in defaults — no need to specify them
 cat > .env << 'EOF'
-PRIVATE_KEY=0x<from step 1>
+KEYSTORE_PATH=~/.apow/keystores/wallet-0x....json
 USE_X402=true
 USE_X402_GRIND=true
 LLM_PROVIDER=clawrouter
@@ -93,7 +94,7 @@ If you prefer to use your own LLM API key instead of ClawRouter:
 
 ```bash
 cat > .env << 'EOF'
-PRIVATE_KEY=0x<your key>
+KEYSTORE_PATH=~/.apow/keystores/wallet-0x....json
 RPC_URL=https://base-mainnet.g.alchemy.com/v2/YOUR_KEY   # Free from alchemy.com
 LLM_PROVIDER=openai
 LLM_MODEL=gpt-4o-mini
@@ -102,6 +103,7 @@ MINING_AGENT_ADDRESS=0xB7caD3ca5F2BD8aEC2Eb67d6E8D448099B3bC03D
 AGENT_COIN_ADDRESS=0x12577CF0D8a07363224D6909c54C056A183e13b3
 EOF
 
+export KEYSTORE_PASSWORD=<keystore-password-from-secret-manager>
 npx apow-cli mint
 npx apow-cli mine
 ```
@@ -110,15 +112,15 @@ npx apow-cli mine
 
 ## 1. What is APoW?
 
-Agent Proof-of-Work (APoW) is a mining protocol on Base L2 where AI agents prove their identity once by minting an ERC-721 Mining Rig NFT (requires LLM to solve an SMHL challenge), then compete on hash power to mine AGENT tokens. Mining requires owning a Miner NFT (ERC-721 with rarity-based hashpower) and no LLM is needed after minting. Rewards start at 3 AGENT per mine (scaled by hashpower) and decay by 10% every 500,000 total network mines, with a hard cap of 21,000,000 AGENT.
+Agent Proof-of-Work (APoW) is a mining protocol on Base L2 where agents own an ERC-721 Mining Rig NFT, then compete on hash power to mine AGENT tokens. New rig mints use an LLM-solved SMHL challenge as the strongest proof-of-agent gate, while secondary-purchased rigs can mine too. Every mine still submits a lightweight algorithmic SMHL proof plus a hash proof. Rewards start at 3 AGENT per mine (scaled by hashpower) and decay by 10% every 500,000 total network mines, with a hard cap of 21,000,000 AGENT.
 
 ### SMHL Challenge Format
 
 SMHL ("Show Me Human Language") serves two different roles in APoW:
 
-**SMHL for Minting (identity verification):** When minting a Mining Rig, your LLM solves an SMHL challenge to prove agent capability. This is the "prove yourself" gate: your agent demonstrates it can solve constrained text generation. The LLM receives a prompt like: "Generate a sentence that is approximately N characters long, contains approximately W words, and includes the letter 'X'."
+**SMHL for Minting (agent gate):** When minting a new Mining Rig, your LLM solves an SMHL challenge as the strongest proof-of-agent gate. The LLM receives a prompt like: "Generate a sentence that is approximately N characters long, contains approximately W words, and includes the letter 'X'."
 
-**SMHL for Mining (algorithmic):** During mining, SMHL solutions are generated algorithmically in microseconds, with no LLM needed. Your AI was already proven when you minted your Mining Rig. Mining is a hash power competition, not a language puzzle.
+**SMHL for Mining (algorithmic):** During mining, SMHL solutions are generated algorithmically in microseconds, with no LLM needed. This proof is still submitted and verified on-chain for every mine; the hash proof is the competitive mechanism.
 
 On-chain verification checks (both minting and mining):
 1. **Length** (in bytes): within ±5 of the target
@@ -134,7 +136,7 @@ The miner client validates locally before submitting.
 | Requirement | Details |
 |---|---|
 | **Node.js** | v20 or higher |
-| **Base wallet** | Easy Mode: none up front, the CLI can create one for you. Advanced Mode: existing private key with ETH on Base for gas + mint fee. |
+| **Base wallet** | Easy Mode: none up front, the CLI can create an encrypted wallet for you. Advanced Mode: existing keystore or private key with ETH on Base for gas + mint fee. |
 | **USDC on Base** | 2.00 USDC minimum starting balance in the mining wallet for x402 RPC / ClawRouter / remote grind; more gives headroom |
 | **LLM access** | Easy Mode: none up front, uses ClawRouter via x402. Advanced Mode: API key (OpenAI, Gemini, etc.) or local Ollama for minting. |
 | **git** | Only if installing from source (not needed for npm) |
@@ -149,7 +151,7 @@ you. You do not need to arrive with a `PRIVATE_KEY`.
 ```bash
 npx apow-cli start
 # Choose "Easy Mode"
-# Select "No" when asked if you have a wallet → generates one automatically
+# Let the CLI generate an encrypted keystore automatically
 ```
 
 You can also generate one directly (useful for agents, headless shells, or Advanced Mode):
@@ -158,15 +160,15 @@ You can also generate one directly (useful for agents, headless shells, or Advan
 npx apow-cli wallet new
 ```
 
-This outputs a private key (0x + 64 hex chars) and Base address, saves a plaintext `wallet-<address>.txt` import helper to the current directory, and can also create an encrypted `wallet-<address>.json` keystore under `~/.apow/keystores/` when a password is available. If you are using a manual or headless flow, put that key in your `.env` as `PRIVATE_KEY`.
+This outputs a Base address and saves an encrypted `wallet-<address>.json` keystore under `~/.apow/keystores/`. The private key is hidden by default. In headless mode, set `KEYSTORE_PASSWORD` from a shell secret manager before running `wallet new`; do not put passwords or private keys in chat.
 
 **Exporting an existing wallet:** If you've already set up a wallet and need to retrieve the key:
 
 ```bash
-npx apow-cli wallet export
+npx apow-cli wallet export --show-private-key
 ```
 
-This prompts for confirmation, then displays your address and private key. It can save a plaintext `wallet-<address>.txt` import helper and/or an encrypted JSON keystore backup.
+This requires typing `SHOW` in interactive terminals, or passing `--show-private-key`, before displaying the private key. It can save a plaintext `wallet-<address>.txt` import helper with `--plaintext`, but encrypted keystores are the default.
 
 **Exporting to a wallet app:** The user can import this private key into Phantom, MetaMask, Rainbow, or any EVM-compatible wallet to view their AGENT tokens and Mining Rig NFT alongside their other assets.
 
@@ -257,9 +259,10 @@ Run `npx apow-cli setup` for interactive configuration, or create a `.env` file 
 ```bash
 # === Required ===
 
-# Your wallet private key (0x-prefixed, 64 hex chars)
-# Required for manual / headless minting and mining commands
-PRIVATE_KEY=0xYOUR_PRIVATE_KEY_HERE
+# Preferred wallet source: encrypted Web3 Secret Storage JSON
+KEYSTORE_PATH=~/.apow/keystores/wallet-0x....json
+# For headless minting/mining, provide KEYSTORE_PASSWORD from the shell or process secret store.
+# Legacy fallback only: PRIVATE_KEY=0xYOUR_PRIVATE_KEY_HERE
 
 # Built-in Base mainnet defaults. Only override if you want a different deployment.
 MINING_AGENT_ADDRESS=0xB7caD3ca5F2BD8aEC2Eb67d6E8D448099B3bC03D
@@ -291,8 +294,9 @@ CHAIN=base
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `PRIVATE_KEY` | Manual / headless only | - | Wallet private key (0x + 64 hex chars). Easy Mode generates this for you if no wallet exists yet. |
-| `KEYSTORE_PASSWORD` | No | unset | If set, `wallet new`/`wallet export` also create an encrypted JSON keystore backup under `~/.apow/keystores/` |
+| `KEYSTORE_PATH` | Recommended wallet source | - | Path to encrypted Web3 Secret Storage JSON under `~/.apow/keystores/`. Easy Mode writes this for generated wallets. |
+| `KEYSTORE_PASSWORD` | Headless unlock only | unset | Password used to unlock `KEYSTORE_PATH` in non-interactive sessions. Prefer shell/process secret storage, not `.env`. |
+| `PRIVATE_KEY` | Legacy fallback only | - | Raw wallet private key (0x + 64 hex chars). Supported for compatibility, but generated wallets should use `KEYSTORE_PATH`. |
 | `MINING_AGENT_ADDRESS` | No | built-in Base mainnet address | MiningAgent contract address. Override only for another deployment or network. |
 | `AGENT_COIN_ADDRESS` | No | built-in Base mainnet address | AgentCoin contract address. Override only for another deployment or network. |
 | `LLM_PROVIDER` | No | `clawrouter` if `USE_X402=true`, else `openai` | LLM provider for minting: `clawrouter` (recommended, zero credentials), `openai`, `gemini`, `deepseek`, `qwen`, `anthropic`, `ollama`, `claude-code`, `codex`. Not needed for mining. |
@@ -312,7 +316,7 @@ CHAIN=base
 | `CUDA_GRINDER_PATH` | No | auto-detected | Explicit path to local CUDA grinder binary |
 | `CPU_GRINDER_PATH` | No | auto-detected | Explicit path to CPU-C grinder binary |
 | `CPU_THREADS` | No | All CPU cores | Thread count for CPU-C grinder |
-| `USE_X402_GRIND` | No | same as `USE_X402` | Enable remote GPU grinding via x402 (dynamic pricing, ~$0.006/grind). Set `false` to disable even when `USE_X402=true`. |
+| `USE_X402_GRIND` | No | same as `USE_X402` | Enable remote GPU grinding via x402 (dynamic pricing, currently starts around `$0.301+` depending difficulty and cold-start assumptions). Set `false` to disable even when `USE_X402=true`. |
 | `GRIND_URL` | No | `https://grind.apow.io/grind` | Custom GrindProxy endpoint URL (for self-hosted grinding) |
 | `VAST_IP` | No | - | Remote VAST.ai GPU host IP (for remote CUDA mining) |
 | `VAST_PORT` | No | - | Remote VAST.ai GPU SSH port |
@@ -321,7 +325,7 @@ CHAIN=base
 
 ### LLM Provider Recommendations (for Minting)
 
-> An LLM is only needed for **minting** your Mining Rig NFT (one-time identity verification). Mining uses optimized algorithmic SMHL solving, with no LLM needed. Use a fast, non-thinking model to stay within the 20-second challenge window.
+> An LLM is only needed when **minting** a new Mining Rig NFT. Secondary-purchased rigs can mine without minting. Mining still submits SMHL every time, but the CLI solves mining SMHL algorithmically with no LLM call. Use a fast, non-thinking model to stay within the 20-second mint challenge window.
 
 | Provider | Model | Cost per call | Notes |
 |---|---|---|---|
@@ -335,7 +339,7 @@ CHAIN=base
 
 ### RPC Recommendations
 
-You need a dedicated RPC endpoint. The public `https://mainnet.base.org` has aggressive rate limits and **will** fail during sustained mining. All providers below offer a **free tier** that is more than sufficient for mining. Alternatively, set `USE_X402=true` for zero-setup auto-pay via QuickNode (2.00 USDC minimum starting balance; add more for headroom).
+You need a dedicated RPC endpoint. Do not use the public Base RPC for sustained mining; it has aggressive rate limits and will fail. All providers below offer a free tier that is more than sufficient for mining. Alternatively, set `USE_X402=true` for zero-setup auto-pay via QuickNode (2.00 USDC minimum starting balance; add more for headroom).
 
 #### Option 1: Alchemy (Recommended)
 
@@ -440,7 +444,7 @@ npx apow-cli mine <tokenId> # or specify a rig by token ID
    - `challengeNumber` (bytes32): the current PoW challenge hash
    - `miningTarget` (uint256): the difficulty target
    - `smhl`: the SMHL format challenge
-4. **Solve SMHL:** generates a valid SMHL solution algorithmically (sub-millisecond, no LLM needed).
+4. **Solve SMHL:** generates a valid SMHL solution algorithmically (sub-millisecond, no LLM call), then submits it for on-chain verification with the hash proof.
 5. **Grind nonce:** brute-force search for a `nonce` where `keccak256(challengeNumber, minerAddress, nonce) < miningTarget`. Works on any CPU out of the box. Add a GPU for 100x+ faster grinding.
    The CLI re-checks the challenge every 5 seconds by default while grinding and aborts stale work across local/native and x402 nonce sources.
 6. **Submit proof:** calls `mine(nonce, smhlSolution, tokenId)` on AgentCoin. The contract verifies both the hash and SMHL solution on-chain.
@@ -474,7 +478,7 @@ A Mythic miner (5.00x) earns 15.00 AGENT per mine in Era 0.
 ### Cost Per Mine
 
 - **Gas:** ~0.001 ETH per `mine()` transaction on Base
-- **LLM:** $0 (mining uses algorithmic SMHL, no LLM calls)
+- **LLM:** $0 (mining SMHL is still verified, but solved algorithmically with no LLM calls)
 - **Total:** ~$0.003 to $0.005 per mining cycle (gas only)
 
 ### Error Handling
@@ -528,9 +532,9 @@ To increase your chances of winning each block, run separate wallets, each with 
 
 ```bash
 # 1. Generate sub-wallets (main wallet is already configured in .env)
-npx apow-cli wallet new   # → address A + key A
-npx apow-cli wallet new   # → address B + key B
-npx apow-cli wallet new   # → address C + key C
+npx apow-cli wallet new   # → address A + keystore path A
+npx apow-cli wallet new   # → address B + keystore path B
+npx apow-cli wallet new   # → address C + keystore path C
 
 # 2. Fund each sub-wallet from the main wallet (default: mint price + 0.003 ETH gas)
 npx apow-cli wallet fund 0xADDRESS_A
@@ -539,26 +543,28 @@ npx apow-cli wallet fund 0xADDRESS_C
 # Or specify a custom amount: npx apow-cli wallet fund 0xADDRESS_A 0.01
 
 # 3. Mint a rig for each sub-wallet
-PRIVATE_KEY=0xKEY_A npx apow-cli mint
-PRIVATE_KEY=0xKEY_B npx apow-cli mint
-PRIVATE_KEY=0xKEY_C npx apow-cli mint
+KEYSTORE_PATH=/path/to/keystore-a.json npx apow-cli mint
+KEYSTORE_PATH=/path/to/keystore-b.json npx apow-cli mint
+KEYSTORE_PATH=/path/to/keystore-c.json npx apow-cli mint
 
 # 4. Mine with all wallets in parallel
-PRIVATE_KEY=0xKEY_A npx apow-cli mine &
-PRIVATE_KEY=0xKEY_B npx apow-cli mine &
-PRIVATE_KEY=0xKEY_C npx apow-cli mine &
+KEYSTORE_PATH=/path/to/keystore-a.json npx apow-cli mine &
+KEYSTORE_PATH=/path/to/keystore-b.json npx apow-cli mine &
+KEYSTORE_PATH=/path/to/keystore-c.json npx apow-cli mine &
 wait
 ```
 
 Or use a process manager like PM2 for production:
 
 ```bash
+export KEYSTORE_PASSWORD=<keystore-password-from-secret-manager>
+
 # ecosystem.config.cjs
 module.exports = {
   apps: [
-    { name: "miner-a", script: "npx", args: "apow mine", env: { PRIVATE_KEY: "0xKEY_A" } },
-    { name: "miner-b", script: "npx", args: "apow mine", env: { PRIVATE_KEY: "0xKEY_B" } },
-    { name: "miner-c", script: "npx", args: "apow mine", env: { PRIVATE_KEY: "0xKEY_C" } },
+    { name: "miner-a", script: "npx", args: "apow mine", env: { KEYSTORE_PATH: "/path/to/keystore-a.json" } },
+    { name: "miner-b", script: "npx", args: "apow mine", env: { KEYSTORE_PATH: "/path/to/keystore-b.json" } },
+    { name: "miner-c", script: "npx", args: "apow mine", env: { KEYSTORE_PATH: "/path/to/keystore-c.json" } },
   ]
 };
 
@@ -585,7 +591,7 @@ Supported grinders (all race in parallel -- first nonce wins, falls back to JS a
 
 ### x402 GPU Grinding (Remote RTX 4090)
 
-No GPU? Add `USE_X402_GRIND=true` to your `.env` for remote RTX 4090 nonce grinding at ~$0.006/grind (dynamic pricing) via the [x402 payment protocol](https://www.x402.org/). Zero setup, zero API keys — payment is automatic from your mining wallet's USDC balance.
+No GPU? Add `USE_X402_GRIND=true` to your `.env` for remote RTX 4090 nonce grinding via the [x402 payment protocol](https://www.x402.org/). Pricing is dynamic and conservative, currently starts around `$0.301+` per grind depending difficulty and cold-start assumptions. Zero setup, zero API keys — payment is automatic from your mining wallet's USDC balance.
 
 ```bash
 # In your .env (enabled automatically in Easy Mode)
@@ -642,7 +648,7 @@ Each Miner NFT supports an on-chain agent wallet. This creates a one-rig-one-age
 
 To mine on testnet, set:
 ```bash
-RPC_URL=https://sepolia.base.org
+RPC_URL=https://your-private-base-sepolia-rpc.example
 CHAIN=baseSepolia
 ```
 Use the corresponding testnet contract addresses.
@@ -653,7 +659,7 @@ Use the corresponding testnet contract addresses.
 
 | Error | Cause | Fix |
 |---|---|---|
-| `PRIVATE_KEY is required for minting and mining commands.` | No wallet is configured for the current manual command | Run `npx apow-cli start` and choose Easy Mode to generate one, or add `PRIVATE_KEY=0x...` to your `.env` file |
+| `An unlocked wallet signer is required.` | No usable wallet is configured for the current manual command | Run `npx apow-cli start` and choose Easy Mode, set `KEYSTORE_PATH` plus `KEYSTORE_PASSWORD`, or use legacy `PRIVATE_KEY=0x...` |
 | `PRIVATE_KEY must be a 32-byte hex string prefixed with 0x.` | Malformed private key | Ensure key is exactly `0x` + 64 hex characters |
 | `MINING_AGENT_ADDRESS is required.` | Contract address missing or overridden with an invalid value | Remove the bad override to use the built-in default, or set the correct `MINING_AGENT_ADDRESS` in `.env` |
 | `AGENT_COIN_ADDRESS is required.` | Contract address missing or overridden with an invalid value | Remove the bad override to use the built-in default, or set the correct `AGENT_COIN_ADDRESS` in `.env` |
@@ -662,7 +668,7 @@ Use the corresponding testnet contract addresses.
 | `Sold out` | All 10,000 Miner NFTs minted | No more rigs available; buy one on secondary market |
 | `Expired` | SMHL challenge expired (>20s) | Use a faster model (gpt-4o-mini, gemini-2.5-flash). Thinking models are too slow for the 20s mint window |
 | `Invalid SMHL` | LLM produced an incorrect solution | Retry; if persistent, switch to a more capable model |
-| `Not your miner` | Token ID not owned by your wallet | Verify `PRIVATE_KEY` matches the NFT owner; check token ID |
+| `Not your miner` | Token ID not owned by your wallet | Verify the unlocked keystore/private key matches the NFT owner; check token ID |
 | `Supply exhausted` | All 18.9M mineable AGENT has been minted | Mining is complete; no more rewards available |
 | `One mine per block` | Another mine was confirmed in this block | Automatic; the miner waits for the next block |
 | `No contracts` | Calling from a contract, not an EOA | Mining requires an externally owned account (EOA) |
@@ -684,11 +690,11 @@ This section addresses the security model of apow-cli head-on. Every claim below
 
 ### Private Key Generation (Local Only)
 
-Keys are generated via `viem/accounts` `generatePrivateKey()`, which uses Node.js `crypto.randomBytes(32)`, a cryptographically secure random number generator. Generation happens entirely in-process with no network calls involved. The private key is displayed once to the terminal, and the CLI can create both a plaintext `wallet-<address>.txt` import helper and a password-protected JSON keystore (`Web3 Secret Storage v3`) with file permissions `0o600`.
+Keys are generated via `viem/accounts` `generatePrivateKey()`, which uses Node.js `crypto.randomBytes(32)`, a cryptographically secure random number generator. Generation happens entirely in-process with no network calls involved. The default generated-wallet path writes a password-protected JSON keystore (`Web3 Secret Storage v3`) under `~/.apow/keystores/` with file permissions `0o600`; the private key is hidden unless the user explicitly runs `apow wallet new --show-private-key` or `apow wallet export --show-private-key`.
 
 ### Private Key Is NEVER Transmitted
 
-Exhaustive audit confirms: the private key string is never included in any `fetch()` call, HTTP request body, URL parameter, or header anywhere in the codebase. viem's signing architecture means the key is used locally for ECDSA signatures, and only the signed transaction (not the key) is sent to the RPC node. This is the same architecture used by MetaMask, Rabby, and every other non-custodial wallet.
+Exhaustive audit confirms: the private key string is never included in any `fetch()` call, HTTP request body, URL parameter, or header anywhere in the codebase. viem's signing architecture means the key is used locally for ECDSA signatures, and only the signed transaction (not the key) is sent to the RPC node. The encrypted keystore is decrypted only inside the local CLI process when `KEYSTORE_PASSWORD` is supplied or entered interactively.
 
 ### Zero Telemetry
 
@@ -732,7 +738,7 @@ The SMHL solver sends only generic word-generation prompts to the LLM (e.g., "Wr
 
 1. **Use a fresh wallet.** Generate one with `npx apow-cli wallet new`. Do not import your main wallet or any wallet holding significant funds.
 2. **Fund with only what you need.** ~0.005 ETH covers minting + several mining cycles.
-3. **Prefer encrypted keystore backups** in `~/.apow/keystores/wallet-<address>.json`. The plaintext `wallet-<address>.txt` helper is convenient for importing into wallet UIs, but it is less secure.
+3. **Prefer encrypted keystores** in `~/.apow/keystores/wallet-<address>.json`. Do not create plaintext `wallet-<address>.txt` helpers unless you are immediately importing into another wallet and can secure or delete the file afterward.
 4. **Verify the source before running** if you prefer:
    ```bash
    git clone https://github.com/Agentoshi/apow-cli
@@ -794,7 +800,7 @@ cat package.json | grep -A5 "scripts"  # no postinstall hook
 
 ## 14. Dashboard
 
-The `apow dashboard` command group provides a real-time web UI for monitoring your entire mining fleet. Zero external dependencies — it serves vanilla HTML/JS directly from the CLI.
+The `apow dashboard` command group provides a manual-refresh web UI for monitoring your entire mining fleet. Zero external dependencies - it serves vanilla HTML/JS directly from the CLI and avoids background RPC polling.
 
 ### Subcommands
 
@@ -810,10 +816,10 @@ The `apow dashboard` command group provides a real-time web UI for monitoring yo
 
 - **Wallet storage:** `~/.apow/wallets.json` — a plain JSON array of Ethereum addresses.
 - **Fleet management:** `~/.apow/fleets.json` — optional, defines named groups of wallets from different sources.
-- **Data fetching:** Chunked RPC multicalls (max 30 per batch) with a 25-second TTL cache. Queries ETH balance, AGENT balance, rig ownership, rarity, hashpower, mine count, and earnings for every wallet.
+- **Data fetching:** One initial load, then refresh only when the user clicks **Refresh** or switches fleets. Uses chunked RPC multicalls (max 30 per batch) with a 25-second TTL cache. Queries ETH balance, AGENT balance, rig ownership, rarity, hashpower, mine count, and earnings for every wallet.
 - **NFT art:** Renders on-chain SVG art for each Mining Rig with rarity-based color coding.
 - **Auto-seed:** On first run, seeds `wallets.json` with the address from your `.env` if configured.
-- **Auto-detect:** `dashboard start` automatically scans CWD for `wallet-0x*.txt` and `wallet-0x*.json` files before launching.
+- **Auto-detect:** `dashboard start` automatically scans CWD for `wallet-0x*.json` keystores and legacy `wallet-0x*.txt` import helpers before launching. It reads addresses from filenames only.
 
 ### Fleet Configuration (`~/.apow/fleets.json`)
 
@@ -834,8 +840,8 @@ For managing wallets across multiple machines or directories, create `~/.apow/fl
 |------|--------------|-------------|
 | `array` | JSON array of addresses | Simple list: `["0xABC...", "0xDEF..."]` |
 | `solkek` | JSON with `master.address` + `miners[].address` | Solkek fleet manager format |
-| `rigdirs` | Directory containing `rig*/wallet-0x*.txt` or `.json` | Scan rig subdirectories for wallet files |
-| `walletfiles` | Directory containing `wallet-0x*.txt` or `.json` | Scan flat directory for wallet files |
+| `rigdirs` | Directory containing `rig*/wallet-0x*.json` or legacy `.txt` files | Scan rig subdirectories for wallet filenames |
+| `walletfiles` | Directory containing `wallet-0x*.json` or legacy `.txt` files | Scan flat directory for wallet filenames |
 
 If `fleets.json` does not exist, the dashboard falls back to `wallets.json` as a single "Main" fleet.
 
@@ -854,7 +860,7 @@ npx apow-cli dashboard wallets
 # 4. Launch the dashboard
 npx apow-cli dashboard start
 # → Opens http://localhost:3847 in your browser
-# → Shows real-time balances, rig stats, earnings, and NFT art
+# → Shows on-demand balances, rig stats, earnings, and NFT art
 # → Press Ctrl+C to stop
 ```
 
@@ -865,7 +871,7 @@ npx apow-cli dashboard start
 | "No wallets configured" | Empty `wallets.json` | Run `apow dashboard add <addr>` or `apow dashboard scan .` |
 | Dashboard shows 0 balances | RPC rate limiting | Set a dedicated `RPC_URL` in `.env` (Alchemy recommended) |
 | Browser doesn't open | Headless/SSH environment | Manually open `http://localhost:3847` in a browser |
-| Stale data | 25s cache TTL | Wait for next refresh cycle or restart the dashboard |
+| Stale data | 25s cache TTL or no manual refresh yet | Click **Refresh**. If clicked inside 25 seconds, cached data may be reused; after the cache expires, the click waits for a fresh RPC read. |
 
 ---
 

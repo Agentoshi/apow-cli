@@ -71,38 +71,43 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
   // Check x402: USDC balance BEFORE RPC check (can't use x402 without USDC)
   let x402Funded = false;
   if (config.useX402 && account) {
-    try {
-      // Use a separate lightweight client to avoid chicken-and-egg
-      // (can't use x402 to check if we can pay for x402)
-      const checkClient = createPublicClient({
-        chain: base,
-        transport: http("https://mainnet.base.org"),
-      });
-      const usdcBalance = (await checkClient.readContract({
-        address: USDC_ADDRESS,
-        abi: erc20BalanceAbi,
-        functionName: "balanceOf",
-        args: [account.address],
-      })) as bigint;
+    if (!config.rpcUrl) {
+      x402Funded = true; // optimistic — the x402 RPC check below will verify reachability.
+      ui.warn("Skipping x402 USDC precheck because RPC_URL is not set; refusing to use public Base RPC endpoints");
+    } else {
+      try {
+        // Use a separate lightweight client to avoid chicken-and-egg
+        // (can't use x402 to check if we can pay for x402)
+        const checkClient = createPublicClient({
+          chain: base,
+          transport: http(config.rpcUrl),
+        });
+        const usdcBalance = (await checkClient.readContract({
+          address: USDC_ADDRESS,
+          abi: erc20BalanceAbi,
+          functionName: "balanceOf",
+          args: [account.address],
+        })) as bigint;
 
-      if (usdcBalance === 0n) {
-        results.push({
-          label: "No USDC balance — QuickNode x402 requires USDC on Base",
-          passed: false,
-          fix: `Send at least 2.00 USDC to ${account.address} on Base for x402 starting balance; add more if you want extra headroom. Run \`apow fund\` to bridge from Solana or Ethereum.`,
-        });
-      } else {
-        x402Funded = true;
-        const formatted = formatUnits(usdcBalance, USDC_DECIMALS);
-        results.push({
-          label: `RPC: QuickNode x402 (${formatted} USDC available)`,
-          passed: true,
-        });
+        if (usdcBalance === 0n) {
+          results.push({
+            label: "No USDC balance — QuickNode x402 requires USDC on Base",
+            passed: false,
+            fix: `Send at least 2.00 USDC to ${account.address} on Base for x402 starting balance; add more if you want extra headroom. Run \`apow fund\` to bridge from Solana or Ethereum.`,
+          });
+        } else {
+          x402Funded = true;
+          const formatted = formatUnits(usdcBalance, USDC_DECIMALS);
+          results.push({
+            label: `RPC: QuickNode x402 (${formatted} USDC available)`,
+            passed: true,
+          });
+        }
+      } catch {
+        // USDC check failed — can't verify, warn but don't block
+        x402Funded = true; // optimistic — let the RPC check determine reachability
+        ui.warn("Could not check USDC balance — QuickNode x402 may fail if wallet has no USDC");
       }
-    } catch {
-      // USDC check failed — can't verify, warn but don't block
-      x402Funded = true; // optimistic — let the RPC check determine reachability
-      ui.warn("Could not check USDC balance — QuickNode x402 may fail if wallet has no USDC");
     }
   }
 
@@ -138,16 +143,23 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
   if (level === "wallet" || level === "mining") {
     // Check 3: Private key valid
     if (account) {
+      const source = config.walletSource === "keystore" ? "encrypted keystore" : "legacy PRIVATE_KEY";
       results.push({
-        label: `Private key valid (${account.address.slice(0, 6)}...${account.address.slice(-4)})`,
+        label: `Wallet signer unlocked via ${source} (${account.address.slice(0, 6)}...${account.address.slice(-4)})`,
         passed: true,
       });
+    } else if (config.keystorePath && config.walletLoadError) {
+      results.push({
+        label: "Encrypted keystore locked",
+        passed: false,
+        fix: config.walletLoadError,
+      });
     } else {
-        results.push({
-          label: "Private key not configured",
-          passed: false,
-          fix: "Run `apow setup` and choose Easy Mode, or set PRIVATE_KEY in .env (0x-prefixed 32-byte hex)",
-        });
+      results.push({
+        label: "Private key not configured",
+        passed: false,
+        fix: "Run `apow setup` and choose Easy Mode, set KEYSTORE_PATH to an encrypted keystore, or set legacy PRIVATE_KEY in .env",
+      });
     }
 
     // Check 4: Wallet has ETH (skip if RPC already failed — avoids duplicate errors)
@@ -198,9 +210,9 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
       if (config.llmProvider === "clawrouter") {
         if (!account) {
           results.push({
-            label: "ClawRouter requires PRIVATE_KEY (wallet signs x402 payments)",
+            label: "ClawRouter requires an unlocked wallet signer (wallet signs x402 payments)",
             passed: false,
-            fix: "Set PRIVATE_KEY in .env",
+            fix: "Unlock KEYSTORE_PATH with KEYSTORE_PASSWORD or set legacy PRIVATE_KEY in .env",
           });
         } else {
           results.push({
