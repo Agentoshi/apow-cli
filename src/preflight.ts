@@ -7,6 +7,8 @@ import agentCoinAbiJson from "./abi/AgentCoin.json";
 import miningAgentAbiJson from "./abi/MiningAgent.json";
 import { config } from "./config";
 import { getGrindUrl, isHttpGrinderConfigured } from "./grinder-http";
+import { loadPolicy } from "./policy/policy";
+import { spentTodayUsdc } from "./policy/spend-ledger";
 import { publicClient, account } from "./wallet";
 import * as ui from "./ui";
 
@@ -141,6 +143,14 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
   }
 
   if (level === "wallet" || level === "mining") {
+    const policy = loadPolicy();
+    const spent = account ? spentTodayUsdc(account.address) : 0;
+    const remaining = Math.max(0, policy.x402.dailyUsdc - spent);
+    results.push({
+      label: `Policy: ${policy.mode} (${remaining.toFixed(2)} USDC x402 budget remaining today)`,
+      passed: true,
+    });
+
     // Check 3: Private key valid
     if (account) {
       const source = config.walletSource === "keystore" ? "encrypted keystore" : "legacy PRIVATE_KEY";

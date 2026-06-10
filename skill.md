@@ -57,6 +57,37 @@ npx apow-cli start
 Easy Mode writes the x402-backed config for the user. The manual requirement is funding the newly
 generated wallet, not bringing a private key or API keys ahead of time.
 
+### APoW Wallet Protocol
+
+Treat the mining wallet as a hot operational key with a narrow job: own one rig, sign APoW mining and bounded x402 payments, then move mined value away.
+
+1. Generate or import an encrypted keystore with `npx apow-cli wallet new` or `npx apow-cli wallet migrate`.
+2. Never write a raw private key or keystore password into `.env`, chat, logs, scripts, or docs.
+3. For headless agents, prefer `KEYSTORE_PASSWORD_CMD` so the password comes from macOS Keychain, Linux Secret Service, or another process secret manager.
+4. Set a cold payout address with `npx apow-cli wallet payout set 0x...`.
+5. Mine normally. When payout is configured, auto-sweep moves AGENT out of the hot wallet after confirmed mines.
+6. Use `npx apow-cli wallet sweep` for manual AGENT sweeps, or `--all` to also move excess ETH and USDC working balances.
+
+Default policy lives at `~/.apow/policy.json`. Audit and spend ledgers are append-only local files at `~/.apow/audit-<address>.jsonl` and `~/.apow/spend-<address>.jsonl`. The built-in guard allows APoW `mine`, rig `getChallenge`/`mint`, configured payout sweeps, bounded funding swaps, and capped USDC EIP-3009 x402 payments. It denies raw hash signing, message signing, Permit, Permit2, unknown contracts, and over-budget x402 payments.
+
+Annotated policy defaults:
+
+```json
+{
+  "mode": "enforce",
+  "payout": "0x...",
+  "maxMintEth": "0.01",
+  "maxSwapEth": "0.02",
+  "maxEthTransferEth": "0.05",
+  "x402": { "maxPerRequestUsdc": 1, "dailyUsdc": 20, "payees": [] },
+  "sweep": { "auto": true, "thresholdAgent": "25" }
+}
+```
+
+Temporary recovery: `APOW_POLICY=warn` logs denials without blocking, and `APOW_POLICY=off` is an emergency bypass. Return to `enforce` after debugging.
+
+AWAL interop: Coinbase Agentic Wallets (`npx awal`) can fund an APoW mining wallet, receive AGENT sweeps as the payout address, and pay generic x402 endpoints. AWAL cannot mine APoW directly because the protocol requires arbitrary direct EOA contract calls from the rig-owning wallet, and APoW project infrastructure does not depend on AWAL/CDP because those accounts are identity-linked.
+
 ### Headless Fallback — Reproduce Easy Mode Defaults Manually
 
 Only use this if the environment cannot drive the interactive CLI prompts. This reproduces the
@@ -296,7 +327,15 @@ CHAIN=base
 |---|---|---|---|
 | `KEYSTORE_PATH` | Recommended wallet source | - | Path to encrypted Web3 Secret Storage JSON under `~/.apow/keystores/`. Easy Mode writes this for generated wallets. |
 | `KEYSTORE_PASSWORD` | Headless unlock only | unset | Password used to unlock `KEYSTORE_PATH` in non-interactive sessions. Prefer shell/process secret storage, not `.env`. |
+| `KEYSTORE_PASSWORD_CMD` / `APOW_KEYSTORE_PASSWORD_CMD` | Headless unlock command | unset | Command whose stdout is the keystore password, such as macOS Keychain's `security find-generic-password -s apow-keystore -w`. |
 | `PRIVATE_KEY` | Legacy fallback only | - | Raw wallet private key (0x + 64 hex chars). Supported for compatibility, but generated wallets should use `KEYSTORE_PATH`. |
+| `APOW_POLICY` | No | `enforce` | Runtime policy mode override: `enforce`, `warn`, or `off`. Use `warn` only for soak/debug. |
+| `APOW_POLICY_PATH` | No | `~/.apow/policy.json` | Override local signing policy file path. |
+| `APOW_PAYOUT_ADDRESS` | No | policy file value | Cold wallet address that receives AGENT sweeps. |
+| `APOW_SWEEP_THRESHOLD_AGENT` | No | `25` | Auto-sweep threshold once payout is configured. |
+| `APOW_X402_DAILY_USDC` | No | `20` | Daily x402 signature budget. |
+| `APOW_X402_MAX_PER_REQUEST_USDC` | No | `1` | Per-payment x402 cap. |
+| `APOW_X402_LEGACY_SIGNER` | No | unset | Temporary fallback to the old QuickNode raw-key signer path. |
 | `MINING_AGENT_ADDRESS` | No | built-in Base mainnet address | MiningAgent contract address. Override only for another deployment or network. |
 | `AGENT_COIN_ADDRESS` | No | built-in Base mainnet address | AgentCoin contract address. Override only for another deployment or network. |
 | `LLM_PROVIDER` | No | `clawrouter` if `USE_X402=true`, else `openai` | LLM provider for minting: `clawrouter` (recommended, zero credentials), `openai`, `gemini`, `deepseek`, `qwen`, `anthropic`, `ollama`, `claude-code`, `codex`. Not needed for mining. |
@@ -660,6 +699,7 @@ Use the corresponding testnet contract addresses.
 | Error | Cause | Fix |
 |---|---|---|
 | `An unlocked wallet signer is required.` | No usable wallet is configured for the current manual command | Run `npx apow-cli start` and choose Easy Mode, set `KEYSTORE_PATH` plus `KEYSTORE_PASSWORD`, or use legacy `PRIVATE_KEY=0x...` |
+| `Policy denied: ...` | Local signing policy blocked a transaction or typed-data signature | Run `npx apow-cli policy show`, set payout if sweeping, or temporarily test with `APOW_POLICY=warn` |
 | `PRIVATE_KEY must be a 32-byte hex string prefixed with 0x.` | Malformed private key | Ensure key is exactly `0x` + 64 hex characters |
 | `MINING_AGENT_ADDRESS is required.` | Contract address missing or overridden with an invalid value | Remove the bad override to use the built-in default, or set the correct `MINING_AGENT_ADDRESS` in `.env` |
 | `AGENT_COIN_ADDRESS is required.` | Contract address missing or overridden with an invalid value | Remove the bad override to use the built-in default, or set the correct `AGENT_COIN_ADDRESS` in `.env` |

@@ -25,6 +25,7 @@ import { dirname, join } from "node:path";
 import os from "node:os";
 import { config } from "./config";
 import type { GrindResult } from "./grinder";
+import { childEnv } from "./secure-env";
 
 export interface GrinderInfo {
   gpu: string | null;
@@ -165,7 +166,7 @@ export async function grindNonceNative(
             "-p", config.vastPort!,
             `root@${config.vastIp}`,
             "pkill -9 grinder-cuda 2>/dev/null",
-          ]);
+          ], { env: childEnv() });
           setTimeout(() => { try { kp.kill(); } catch {} }, 5000);
         } catch {}
       }
@@ -206,7 +207,7 @@ export async function grindNonceNative(
     if (info.gpu) {
       totalGrinders++;
       // Set CWD to binary's directory so Metal grinder finds keccak.metal shader
-      const proc = spawn(info.gpu, [challengeNumber, minerAddress, targetHex], { cwd: dirname(info.gpu) });
+      const proc = spawn(info.gpu, [challengeNumber, minerAddress, targetHex], { cwd: dirname(info.gpu), env: childEnv() });
       processes.push(proc);
 
       let stdout = "";
@@ -236,7 +237,7 @@ export async function grindNonceNative(
     if (info.cuda) {
       totalGrinders++;
       // CUDA arg order: <challenge> <target> <address>
-      const proc = spawn(info.cuda, [challengeNumber, targetHex, minerAddress]);
+      const proc = spawn(info.cuda, [challengeNumber, targetHex, minerAddress], { env: childEnv() });
       processes.push(proc);
 
       let buf = "";
@@ -274,7 +275,7 @@ export async function grindNonceNative(
       const proc = spawn(info.cpu, [
         challengeNumber, minerAddress, targetHex,
         String(config.cpuGrinderThreads),
-      ]);
+      ], { env: childEnv() });
       processes.push(proc);
 
       let stdout = "";
@@ -311,7 +312,7 @@ export async function grindNonceNative(
         "-p", config.vastPort!,
         `root@${config.vastIp}`,
         `${config.remoteGrinderPath} ${challengeNumber} ${targetHex} ${minerAddress}`,
-      ]);
+      ], { env: childEnv() });
       processes.push(proc);
 
       let buf = "";

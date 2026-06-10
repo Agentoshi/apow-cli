@@ -2,6 +2,7 @@ import * as http from "node:http";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createPublicClient, formatEther, getAddress, http as viemHttp, type Abi, type Address, type Transport } from "viem";
+import type { LocalAccount } from "viem/accounts";
 import { base } from "viem/chains";
 import { getDashboardHtml } from "./dashboard-html";
 import { createX402Transport } from "./x402";
@@ -55,7 +56,8 @@ export interface DashboardOpts {
   walletsPath: string;
   rpcUrl: string;
   useX402: boolean;
-  privateKey?: `0x${string}`;
+  signer?: LocalAccount;
+  legacyPrivateKey?: `0x${string}`;
   miningAgentAddress: Address;
   agentCoinAddress: Address;
 }
@@ -206,10 +208,10 @@ function parseArtFromTokenUri(raw: string): string {
 // --- Server ---
 
 export function startDashboardServer(opts: DashboardOpts): http.Server {
-  const { port, walletsPath, rpcUrl, useX402, privateKey, miningAgentAddress, agentCoinAddress } = opts;
+  const { port, walletsPath, rpcUrl, useX402, signer, legacyPrivateKey, miningAgentAddress, agentCoinAddress } = opts;
 
-  const transport: Transport = useX402 && privateKey
-    ? createX402Transport(privateKey)
+  const transport: Transport = useX402 && signer
+    ? createX402Transport(signer, legacyPrivateKey)
     : viemHttp(rpcUrl);
 
   const publicClient = createPublicClient({

@@ -88,7 +88,11 @@ If you want to control each step manually, the older step-by-step flow is still 
 | `apow wallet new` | Generate a new encrypted mining wallet |
 | `apow wallet show` | Show configured wallet address |
 | `apow wallet export` | Export your wallet's private key only with explicit confirmation or `--show-private-key` |
+| `apow wallet migrate` | Encrypt legacy `PRIVATE_KEY` into a keystore and clear `.env` |
+| `apow wallet payout set <addr>` | Configure a cold payout address for AGENT sweeps |
+| `apow wallet sweep [--all]` | Sweep mined AGENT, and optionally excess ETH/USDC, to payout |
 | `apow wallet fund <addr> [eth]` | Send ETH to another address (default: mint price + gas) |
+| `apow policy show/init/set mode` | Inspect or change local signing policy |
 | `apow mint` | Mint a MiningAgent NFT (one per wallet) |
 | `apow mine [tokenId]` | Mine $AGENT with your NFT (auto-detects best rig) |
 | `apow stats [tokenId]` | View mining stats, earnings, difficulty |
@@ -111,6 +115,9 @@ ALLOW_LOCAL_FALLBACK_WITH_X402=false  # Easy Mode default: do not burn local CPU
 # LLM_MODEL=blockrun/eco      # Auto-detected per provider; override only if needed
 # LLM_API_KEY=sk-...          # Not needed with clawrouter/ollama; required for openai/gemini/etc.
 # KEYSTORE_PASSWORD=...       # Headless unlock only; prefer shell/process secret storage over committing to .env
+# KEYSTORE_PASSWORD_CMD=...   # Preferred headless unlock command, stdout is used as password
+# APOW_POLICY=enforce         # enforce | warn | off
+# APOW_PAYOUT_ADDRESS=0x...   # optional cold payout wallet for AGENT sweeps
 # PRIVATE_KEY=0x...           # Legacy/headless escape hatch. Prefer KEYSTORE_PATH for generated wallets.
 # Bridging (only for `apow fund`)
 # SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
@@ -122,6 +129,32 @@ ALLOW_LOCAL_FALLBACK_WITH_X402=false  # Easy Mode default: do not burn local CPU
 ```
 
 See [.env.example](.env.example) for all options.
+
+## Wallet Protocol v2
+
+Mining requires a hot EOA because the immutable APoW contracts require direct wallet signatures. Wallet Protocol v2 limits that hot wallet's blast radius:
+
+- every transaction and x402 typed-data signature goes through a local policy guard;
+- mined AGENT can be swept to a separate payout address with `apow wallet payout set <addr>`;
+- audit and spend ledgers are written under `~/.apow/audit-<address>.jsonl` and `~/.apow/spend-<address>.jsonl`;
+- child grinder and local LLM processes do not receive `PRIVATE_KEY`, `KEYSTORE_PASSWORD`, or `APOW_KEYSTORE_PASSWORD`;
+- plaintext exports require `--i-understand-plaintext-risk` and an interactive `PLAINTEXT` confirmation.
+
+Useful commands:
+
+```bash
+apow policy show
+apow policy set mode warn      # temporary soak/debug mode
+apow wallet payout set 0x...
+apow wallet sweep
+apow wallet migrate            # convert legacy PRIVATE_KEY to KEYSTORE_PATH
+```
+
+For headless unlocks, prefer a command that prints the password from your OS secret store:
+
+```bash
+KEYSTORE_PASSWORD_CMD="security find-generic-password -s apow-keystore -w"
+```
 
 ## LLM Providers (for Minting)
 

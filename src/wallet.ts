@@ -1,15 +1,16 @@
 import { createPublicClient, createWalletClient, http, type Transport } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
 import { Attribution } from "ox/erc8021";
 
 import { config } from "./config";
+import { getSigner, resetSigner } from "./signer/local-keystore";
 import { createX402Transport } from "./x402";
 
 const DATA_SUFFIX = Attribution.toDataSuffix({ codes: ["bc_6wfeb1kd"] });
 
 function getTransport(): Transport {
-  if (config.useX402 && config.privateKey) {
-    return createX402Transport(config.privateKey);
+  const signer = getSigner();
+  if (config.useX402 && signer) {
+    return createX402Transport(signer.account, config.privateKey);
   }
   return http(config.rpcUrl);
 }
@@ -21,9 +22,7 @@ export let publicClient = createPublicClient({
   transport,
 });
 
-export let account = config.privateKey
-  ? privateKeyToAccount(config.privateKey)
-  : null;
+export let account = getSigner()?.account ?? null;
 
 export let walletClient = account
   ? createWalletClient({
@@ -39,9 +38,7 @@ let bootstrapPublicClient = createPublicClient({
   transport: getBootstrapTransport(),
 });
 
-let bootstrapAccount = config.privateKey
-  ? privateKeyToAccount(config.privateKey)
-  : null;
+let bootstrapAccount = getSigner()?.account ?? null;
 
 let bootstrapWalletClient = bootstrapAccount
   ? createWalletClient({
@@ -62,10 +59,9 @@ function getBootstrapTransport(): Transport {
 
 /** Reinitialize clients after config changes (e.g., x402 fallback). */
 export function reinitClients(): void {
+  resetSigner();
   transport = getTransport();
-  account = config.privateKey
-    ? privateKeyToAccount(config.privateKey)
-    : null;
+  account = getSigner()?.account ?? null;
   publicClient = createPublicClient({ chain: config.chain, transport });
   walletClient = account
     ? createWalletClient({
@@ -80,9 +76,7 @@ export function reinitClients(): void {
     chain: config.chain,
     transport: getBootstrapTransport(),
   });
-  bootstrapAccount = config.privateKey
-    ? privateKeyToAccount(config.privateKey)
-    : null;
+  bootstrapAccount = getSigner()?.account ?? null;
   bootstrapWalletClient = bootstrapAccount
     ? createWalletClient({
         account: bootstrapAccount,

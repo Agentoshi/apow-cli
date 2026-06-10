@@ -11,6 +11,14 @@ const patterns: Array<{
   classify: (msg: string) => ClassifiedError;
 }> = [
   {
+    test: (m) => m.includes("Policy denied:"),
+    classify: (msg) => ({
+      category: "setup",
+      userMessage: msg,
+      recovery: "Review `apow policy show`, set a payout if needed, or temporarily use `APOW_POLICY=warn` while debugging.",
+    }),
+  },
+  {
     test: (m) => m.includes("Not your miner"),
     classify: () => ({
       category: "fatal",

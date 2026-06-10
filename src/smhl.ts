@@ -2,6 +2,8 @@ import { exec, execFile } from "node:child_process";
 import OpenAI from "openai";
 
 import { config, requireLlmApiKey, resolveDefaultModel, type LlmProvider } from "./config";
+import { childEnv } from "./secure-env";
+import { getSigner } from "./signer/local-keystore";
 
 export interface SmhlChallenge {
   targetAsciiSum: number;
@@ -344,9 +346,12 @@ async function requestQwenSolutionForModel(prompt: string, model: string): Promi
 
 async function requestClawRouterSolution(prompt: string, model: string): Promise<string> {
   const { ensureClawRouter, getClawRouterBaseUrl } = await import("./clawrouter");
-  const { requirePrivateKey } = await import("./config");
 
-  await ensureClawRouter(requirePrivateKey());
+  const signer = getSigner();
+  if (!signer) {
+    throw new Error("ClawRouter requires an unlocked wallet signer.");
+  }
+  await ensureClawRouter(signer.unsafeRawKeyFor("clawrouter"));
 
   const client = new OpenAI({
     apiKey: "x402",
@@ -372,7 +377,7 @@ async function requestClawRouterSolution(prompt: string, model: string): Promise
 async function requestClaudeCodeSolution(prompt: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const escaped = prompt.replace(/'/g, "'\\''");
-    exec(`claude -p '${escaped}'`, { timeout: 120_000 }, (error, stdout, stderr) => {
+    exec(`claude -p '${escaped}'`, { timeout: 120_000, env: childEnv() }, (error, stdout, stderr) => {
       if (error) {
         reject(new Error(`Claude Code error: ${error.message}${stderr ? `\nstderr: ${stderr}` : ""}${stdout ? `\nstdout: ${stdout}` : ""}`));
         return;
@@ -384,7 +389,7 @@ async function requestClaudeCodeSolution(prompt: string): Promise<string> {
 
 async function requestCodexSolution(prompt: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("codex", ["exec", prompt, "--full-auto"], { timeout: 15_000 }, (error, stdout, stderr) => {
+    execFile("codex", ["exec", prompt, "--full-auto"], { timeout: 15_000, env: childEnv() }, (error, stdout, stderr) => {
       if (error) {
         reject(new Error(`Codex error: ${error.message}${stderr ? `\nstderr: ${stderr}` : ""}${stdout ? `\nstdout: ${stdout}` : ""}`));
         return;

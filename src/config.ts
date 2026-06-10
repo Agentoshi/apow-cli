@@ -1,4 +1,5 @@
 import { config as loadEnv } from "dotenv";
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
@@ -6,6 +7,7 @@ import { join } from "node:path";
 import type { Address, Chain, Hex } from "viem";
 import { base, baseSepolia } from "viem/chains";
 
+import { getSessionPassword } from "./signer/session";
 import { loadEncryptedKeystoreFile, resolveKeystorePath } from "./wallet-store";
 
 loadEnv({ quiet: true });
@@ -108,6 +110,24 @@ function parsePrivateKey(value?: string): Hex | undefined {
 }
 
 function resolveKeystorePassword(): string {
+  const sessionPassword = getSessionPassword();
+  if (sessionPassword) return sessionPassword;
+  const envPassword = process.env.KEYSTORE_PASSWORD?.trim()
+    || process.env.APOW_KEYSTORE_PASSWORD?.trim();
+  if (envPassword) return envPassword;
+  const command = process.env.KEYSTORE_PASSWORD_CMD?.trim()
+    || process.env.APOW_KEYSTORE_PASSWORD_CMD?.trim();
+  if (command) {
+    const result = spawnSync(command, {
+      shell: true,
+      encoding: "utf8",
+      timeout: 10_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    if (result.status === 0 && result.stdout.trim()) {
+      return result.stdout.trim();
+    }
+  }
   return process.env.KEYSTORE_PASSWORD?.trim()
     || process.env.APOW_KEYSTORE_PASSWORD?.trim()
     || "";
@@ -274,6 +294,15 @@ export function isExpensiveModel(model: string): boolean {
 }
 
 export async function writeEnvFile(values: Record<string, string>): Promise<void> {
+  for (const [key, value] of Object.entries(values)) {
+    if (/KEYSTORE_PASSWORD/i.test(key)) {
+      throw new Error(`${key} must not be written to .env. Use KEYSTORE_PASSWORD_CMD or a shell secret manager.`);
+    }
+    if (key === "PRIVATE_KEY" && value.trim()) {
+      throw new Error("PRIVATE_KEY must not be written to .env. Use an encrypted keystore.");
+    }
+  }
+
   const envPath = join(process.cwd(), ".env");
   const preserved: string[] = [];
 

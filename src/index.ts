@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { Command } from "commander";
 
-import type { Abi } from "viem";
-import { createPublicClient, formatEther, formatUnits, http, parseEther } from "viem";
+import type { Abi, Address } from "viem";
+import { createPublicClient, formatEther, formatUnits, getAddress, http, parseEther } from "viem";
 
 import miningAgentAbiJson from "./abi/MiningAgent.json";
 import { config, isExpensiveModel, reloadConfig, resolveDefaultModel, writeEnvFile, type LlmProvider } from "./config";
@@ -18,11 +18,16 @@ import { runFundFlow } from "./fund";
 import { runMintFlow } from "./mint";
 import { startMining } from "./miner";
 import { runPreflight } from "./preflight";
+import { childEnv } from "./secure-env";
+import { setSessionPassword } from "./signer/session";
 import { displayStats } from "./stats";
+import { runSweep } from "./sweep";
 import { warnIfUpdateAvailable } from "./update";
 import * as ui from "./ui";
 import { detectWalletAddressFromFilename, loadEncryptedKeystoreFile, resolveKeystorePath, saveEncryptedKeystoreFile, savePlaintextImportFile } from "./wallet-store";
 import { account, getEthBalance, publicClient, reinitClients, requireWallet } from "./wallet";
+import { setSignerContext } from "./policy/context";
+import { getPayoutAddress, loadPolicy, savePolicy, writeDefaultPolicyFile } from "./policy/policy";
 
 const miningAgentAbi = miningAgentAbiJson as Abi;
 const erc20BalanceAbi = [
@@ -102,7 +107,7 @@ async function getKeystorePassword(required: boolean, confirmPassword = true): P
       return null;
     }
   }
-  process.env.KEYSTORE_PASSWORD = entered;
+  setSessionPassword(entered);
   return entered;
 }
 
@@ -111,7 +116,7 @@ async function saveKeystoreWithPassword(
   privateKey: `0x${string}`,
   password: string,
 ): Promise<string> {
-  process.env.KEYSTORE_PASSWORD = password;
+  setSessionPassword(password);
   return saveEncryptedKeystoreFile(address, privateKey, password);
 }
 
@@ -409,9 +414,11 @@ async function setupWizard(): Promise<void> {
   }
 
   await writeEnvFile(values);
+  const policyFile = writeDefaultPolicyFile();
   reloadConfig();
   reinitClients();
   ui.ok("Config saved to .env");
+  ui.ok(`Policy saved to ${policyFile}`);
   ensureGitignoreSafetyEntries();
 
   console.log("");
@@ -520,6 +527,7 @@ async function runStartFlow(): Promise<void> {
       return;
     }
 
+    setSignerContext("fund");
     await runFundFlow({});
 
     const refreshedEth = Number(formatEther(await getEthBalance()));
@@ -531,6 +539,7 @@ async function runStartFlow(): Promise<void> {
     }
   }
 
+  setSignerContext("mint");
   await runMintFlow({ startMiningAfterMint: true });
 }
 
@@ -559,6 +568,10 @@ async function main(): Promise<void> {
     .description("Mine AGENT tokens on Base L2 with Agentic Proof of Work")
     .version(version);
 
+  if (config.walletSource === "private-key") {
+    ui.warn("Legacy PRIVATE_KEY is loaded. Run `apow wallet migrate` to encrypt it into a keystore.");
+  }
+
   program
     .command("setup")
     .description("Agent-first setup wizard — choose Easy Mode (x402 for everything) or Advanced Mode")
@@ -581,6 +594,7 @@ async function main(): Promise<void> {
     .option("--amount <eth>", "Target ETH amount (default: 0.005)")
     .option("--no-swap", "Skip auto-split after bridging")
     .action(async (opts: { chain?: string; token?: string; amount?: string; swap?: boolean }) => {
+      setSignerContext("fund");
       await unlockConfiguredKeystoreIfNeeded();
       if (!config.privateKey || !account) {
         ui.warn("No wallet configured — launching setup first.");
@@ -599,6 +613,7 @@ async function main(): Promise<void> {
     .command("mint")
     .description("Mint a new miner NFT (Easy Mode: x402 LLM, no API key)")
     .action(async () => {
+      setSignerContext("mint");
       await unlockConfiguredKeystoreIfNeeded();
       if (!config.privateKey || !account) {
         ui.warn("No wallet configured — launching setup first.");
@@ -619,6 +634,7 @@ async function main(): Promise<void> {
     .description("Start the mining loop (Easy Mode: remote x402 GPU)")
     .argument("[tokenId]", "Miner token ID (auto-detects if omitted)")
     .action(async (tokenIdArg?: string) => {
+      setSignerContext("mine");
       await unlockConfiguredKeystoreIfNeeded();
       const hasWallet = !!config.privateKey && !!account;
       const hasRpc = config.useX402 || !!config.rpcUrl;
@@ -697,6 +713,46 @@ async function main(): Promise<void> {
       await buildGrinders(opts);
     });
 
+  const policyCmd = program
+    .command("policy")
+    .description("Show and configure local wallet signing policy");
+
+  policyCmd
+    .command("show")
+    .description("Print the current wallet policy")
+    .action(() => {
+      setSignerContext("policy");
+      console.log(JSON.stringify(loadPolicy(), null, 2));
+    });
+
+  policyCmd
+    .command("init")
+    .description("Write the default policy file")
+    .option("--force", "Overwrite existing policy.json")
+    .action((opts: { force?: boolean }) => {
+      const path = writeDefaultPolicyFile(opts.force === true);
+      ui.ok(`Policy file ready: ${path}`);
+    });
+
+  policyCmd
+    .command("set")
+    .description("Set policy values")
+    .command("mode <mode>")
+    .description("Set policy mode: enforce, warn, or off")
+    .action((mode: string) => {
+      if (mode !== "enforce" && mode !== "warn" && mode !== "off") {
+        ui.error("Mode must be enforce, warn, or off.");
+        return;
+      }
+      const policy = loadPolicy();
+      policy.mode = mode;
+      const path = savePolicy(policy);
+      ui.ok(`Policy mode set to ${mode} in ${path}`);
+      if (mode !== "enforce") {
+        ui.warn("Policy is not enforcing. Use only as a temporary recovery mode.");
+      }
+    });
+
   const walletCmd = program
     .command("wallet")
     .description("Wallet generation and management");
@@ -705,8 +761,7 @@ async function main(): Promise<void> {
     .command("new")
     .description("Generate a new encrypted Base wallet")
     .option("--show-private-key", "Print the private key after generation (unsafe except for immediate import)")
-    .option("--plaintext", "Also save a plaintext wallet-<address>.txt import helper")
-    .action(async (opts: { showPrivateKey?: boolean; plaintext?: boolean }) => {
+    .action(async (opts: { showPrivateKey?: boolean }) => {
       const password = await getKeystorePassword(true);
       if (!password) {
         return;
@@ -716,7 +771,6 @@ async function main(): Promise<void> {
       const key = generatePrivateKey();
       const acct = privateKeyToAccount(key);
       const artifacts = await saveWalletArtifacts(acct.address, key, {
-        createPlaintextImportFile: opts.plaintext === true,
         requireKeystore: true,
       });
 
@@ -735,9 +789,6 @@ async function main(): Promise<void> {
         console.log(`  ${ui.yellow("WARNING: anyone with this key controls your funds.")}`);
       } else {
         console.log(`  ${ui.dim("Private key hidden. Export later with: apow wallet export --show-private-key")}`);
-      }
-      if (artifacts.plaintextPath) {
-        console.log(`  ${ui.yellow(`Plaintext import helper saved to: ${artifacts.plaintextPath}`)}`);
       }
       console.log("");
       console.log(`  ${ui.dim("Import into Phantom, MetaMask, or any EVM wallet")}`);
@@ -769,12 +820,25 @@ async function main(): Promise<void> {
     .description("Export wallet private key or create backup artifacts")
     .option("--show-private-key", "Display the decrypted private key")
     .option("--plaintext", "Save a plaintext wallet-<address>.txt import helper")
+    .option("--i-understand-plaintext-risk", "Required with --plaintext")
     .option("--keystore", "Write or refresh the encrypted keystore backup")
-    .action(async (opts: { showPrivateKey?: boolean; plaintext?: boolean; keystore?: boolean }) => {
+    .action(async (opts: { showPrivateKey?: boolean; plaintext?: boolean; iUnderstandPlaintextRisk?: boolean; keystore?: boolean }) => {
       await unlockConfiguredKeystoreIfNeeded();
       if (!account || !config.privateKey) {
         ui.error("No wallet configured. Run `apow setup` and choose Easy Mode, or set KEYSTORE_PATH or PRIVATE_KEY in .env.");
         return;
+      }
+
+      if (opts.plaintext && !opts.iUnderstandPlaintextRisk) {
+        ui.error("Refusing plaintext export without --i-understand-plaintext-risk.");
+        return;
+      }
+      if (opts.plaintext && ui.isInteractiveSession()) {
+        const typed = await ui.prompt("Type PLAINTEXT to create an unencrypted wallet file");
+        if (typed !== "PLAINTEXT") {
+          console.log("  Cancelled.");
+          return;
+        }
       }
 
       const shouldPrintKey = opts.showPrivateKey === true
@@ -798,10 +862,8 @@ async function main(): Promise<void> {
       }
       console.log("");
 
-      const savePlaintext = opts.plaintext === true
-        || (ui.isInteractiveSession() && await ui.confirm("Save plaintext import helper?"));
       const artifacts = await saveWalletArtifacts(account.address, config.privateKey, {
-        createPlaintextImportFile: savePlaintext,
+        createPlaintextImportFile: opts.plaintext === true,
         requireKeystore: opts.keystore === true,
       });
       if (artifacts.plaintextPath) {
@@ -814,11 +876,74 @@ async function main(): Promise<void> {
     });
 
   walletCmd
+    .command("migrate")
+    .description("Encrypt legacy PRIVATE_KEY into a keystore and clear .env PRIVATE_KEY")
+    .action(async () => {
+      if (config.walletSource !== "private-key" || !config.privateKey || !account) {
+        ui.error("No legacy PRIVATE_KEY wallet is loaded.");
+        return;
+      }
+      const password = await getKeystorePassword(true);
+      if (!password) return;
+      const keystorePath = await saveKeystoreWithPassword(account.address, config.privateKey, password);
+      await writeEnvFile({ PRIVATE_KEY: "", KEYSTORE_PATH: keystorePath });
+      reloadConfig();
+      reinitClients();
+      ui.ok(`Encrypted keystore saved to ${keystorePath}`);
+      ui.hint("Unset PRIVATE_KEY in your shell or process manager if it is exported outside .env.");
+    });
+
+  const payoutCmd = walletCmd
+    .command("payout")
+    .description("Configure the cold payout address for mined AGENT sweeps");
+
+  payoutCmd
+    .command("set <address>")
+    .description("Set payout address")
+    .action(async (address: string) => {
+      await unlockConfiguredKeystoreIfNeeded();
+      if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+        ui.error("Invalid payout address.");
+        return;
+      }
+      const payout = getAddress(address) as Address;
+      if (account && payout.toLowerCase() === account.address.toLowerCase()) {
+        ui.error("Payout address must differ from the mining wallet.");
+        return;
+      }
+      const policy = loadPolicy();
+      policy.payout = payout;
+      const path = savePolicy(policy);
+      ui.ok(`Payout set to ${payout.slice(0, 6)}...${payout.slice(-4)} in ${path}`);
+    });
+
+  payoutCmd
+    .command("show")
+    .description("Show configured payout address")
+    .action(() => {
+      const payout = getPayoutAddress();
+      console.log("");
+      console.log(`  Payout: ${payout ?? "(not configured)"}`);
+      console.log("");
+    });
+
+  walletCmd
+    .command("sweep")
+    .description("Sweep mined AGENT to the configured payout address")
+    .option("--all", "Also sweep excess ETH and USDC working balances")
+    .action(async (opts: { all?: boolean }) => {
+      setSignerContext("sweep");
+      await unlockConfiguredKeystoreIfNeeded();
+      await runSweep({ all: opts.all === true });
+    });
+
+  walletCmd
     .command("fund")
     .description("Send ETH from your wallet to another address")
     .argument("<address>", "Destination address (0x-prefixed)")
     .argument("[amount]", "ETH amount to send (default: mint price + 0.003 ETH gas buffer)")
     .action(async (address: string, amountArg?: string) => {
+      setSignerContext("wallet-fund");
       await unlockConfiguredKeystoreIfNeeded();
       if (!config.privateKey || !account) {
         ui.warn("No wallet configured — launching setup first.");
@@ -912,6 +1037,7 @@ async function main(): Promise<void> {
     .command("start", { isDefault: true })
     .description("Launch the dashboard web UI")
     .action(async () => {
+      setSignerContext("dashboard");
       const walletsPath = getWalletsPath();
 
       // Seed wallets.json if it doesn't exist
@@ -947,7 +1073,8 @@ async function main(): Promise<void> {
         walletsPath,
         rpcUrl: config.rpcUrl,
         useX402: config.useX402,
-        privateKey: config.privateKey as `0x${string}` | undefined,
+        signer: account ?? undefined,
+        legacyPrivateKey: config.privateKey as `0x${string}` | undefined,
         miningAgentAddress: config.miningAgentAddress as `0x${string}`,
         agentCoinAddress: config.agentCoinAddress as `0x${string}`,
       });
@@ -955,7 +1082,7 @@ async function main(): Promise<void> {
       // Open browser after short delay (server starts instantly)
       setTimeout(() => {
         const openCmd = process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-        spawn(openCmd, ["http://localhost:3847"], { stdio: "ignore" });
+        spawn(openCmd, ["http://localhost:3847"], { stdio: "ignore", env: childEnv() });
       }, 500);
 
       // Wait for SIGINT

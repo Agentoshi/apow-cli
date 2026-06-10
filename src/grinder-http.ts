@@ -13,6 +13,7 @@
 
 import type { GrindResult } from "./grinder";
 import { config } from "./config";
+import type { LocalAccount } from "viem/accounts";
 
 const DEFAULT_GRIND_URL = "https://grind.apow.io/grind";
 const GRIND_HTTP_TIMEOUT_MS = 60_000;
@@ -37,14 +38,12 @@ function extractErrorDetail(body: string): string {
   return body.trim();
 }
 
-async function getPaymentFetch(privateKey: `0x${string}`): Promise<typeof fetch> {
+async function getPaymentFetch(signer: LocalAccount): Promise<typeof fetch> {
   if (_fetchWithPayment) return _fetchWithPayment;
 
-  const { privateKeyToAccount } = await import("viem/accounts");
   const { x402Client, wrapFetchWithPayment } = await import("@x402/fetch");
   const { registerExactEvmScheme } = await import("@x402/evm/exact/client");
 
-  const signer = privateKeyToAccount(privateKey);
   const client = new x402Client();
   registerExactEvmScheme(client, { signer });
 
@@ -65,7 +64,7 @@ export async function grindNonceHttp(
   target: bigint,
   minerAddress: `0x${string}`,
   grindUrl: string,
-  privateKey: `0x${string}`,
+  signer: LocalAccount,
   signal?: AbortSignal,
 ): Promise<GrindResult> {
   const start = process.hrtime();
@@ -84,7 +83,7 @@ export async function grindNonceHttp(
 
   let response: Response | null = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const paidFetch = await getPaymentFetch(privateKey);
+    const paidFetch = await getPaymentFetch(signer);
     try {
       response = await paidFetch(grindUrl, requestInit);
     } catch (err) {

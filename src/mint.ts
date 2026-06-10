@@ -7,6 +7,7 @@ import { txUrl, tokenUrl } from "./explorer";
 import { normalizeSmhlChallenge, solveSmhlChallenge, type SmhlChallenge } from "./smhl";
 import { formatHashpower, rarityLabels } from "./detect";
 import { startMining } from "./miner";
+import { setSignerContext } from "./policy/context";
 import * as ui from "./ui";
 import { getEthBalance, publicClient, requireWallet } from "./wallet";
 
@@ -278,10 +279,12 @@ export async function runMintFlow(options: MintFlowOptions = {}): Promise<bigint
 
   // Offer to start mining
   if (options.startMiningAfterMint === true) {
+    setSignerContext("mine");
     await startMining(tokenId);
   } else if (options.startMiningAfterMint !== false) {
     const startMine = await ui.confirm("Start mining?");
     if (startMine) {
+      setSignerContext("mine");
       await startMining(tokenId);
     }
   }

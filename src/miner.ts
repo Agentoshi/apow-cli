@@ -16,6 +16,7 @@ import { getGrindUrl, grindNonceHttp, isHttpGrinderConfigured } from "./grinder-
 import { detectGrinders, grinderLabel, grindNonceNative, hasNativeGrinders } from "./grinder-native";
 import type { GrinderInfo } from "./grinder-native";
 import { normalizeSmhlChallenge, solveSmhlAlgorithmic, validateSmhlSolution } from "./smhl";
+import { maybeAutoSweep } from "./sweep";
 import * as ui from "./ui";
 import { account as walletAccount, getEthBalance, publicClient, requireWallet } from "./wallet";
 
@@ -300,6 +301,7 @@ async function showStartupBanner(tokenId: bigint): Promise<StartupContext> {
 export async function startMining(tokenId: bigint): Promise<void> {
   const { account, walletClient } = requireWallet();
   let consecutiveFailures = 0;
+  let successfulMines = 0;
   let mineCount = 0;
   let runningTotal = (await publicClient.readContract({
     address: config.agentCoinAddress,
@@ -538,7 +540,7 @@ export async function startMining(tokenId: bigint): Promise<void> {
           if (useHttpGrind) {
             grinders.push(
               Promise.race([
-                grindNonceHttp(challengeNumber, target, account.address, grindUrl, config.privateKey!, abortController.signal),
+                grindNonceHttp(challengeNumber, target, account.address, grindUrl, account, abortController.signal),
                 rejectOnAbort(abortController.signal),
               ])
                 .catch((err) => {
@@ -684,6 +686,8 @@ export async function startMining(tokenId: bigint): Promise<void> {
 
       // Wait for block advancement before next iteration
       await waitForNextBlock(receipt!.blockNumber);
+      successfulMines += 1;
+      await maybeAutoSweep(successfulMines);
 
       consecutiveFailures = 0;
     } catch (error) {

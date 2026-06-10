@@ -6,6 +6,7 @@ import miningAgentAbiJson from "./abi/MiningAgent.json";
 import { config } from "./config";
 import { formatHashpower, rarityLabels } from "./detect";
 import { tokenUrl } from "./explorer";
+import { getPayoutAddress } from "./policy/policy";
 import * as ui from "./ui";
 import { account, publicClient } from "./wallet";
 
@@ -13,7 +14,8 @@ const miningAgentAbi = miningAgentAbiJson as Abi;
 const agentCoinAbi = agentCoinAbiJson as Abi;
 
 export async function displayStats(tokenId?: bigint): Promise<void> {
-  const [totalMines, totalMinted, miningTarget, mineableSupply, eraInterval, walletBalance] = await Promise.all([
+  const payout = getPayoutAddress();
+  const [totalMines, totalMinted, miningTarget, mineableSupply, eraInterval, walletBalance, payoutBalance] = await Promise.all([
     publicClient.readContract({
       address: config.agentCoinAddress,
       abi: agentCoinAbi,
@@ -45,6 +47,14 @@ export async function displayStats(tokenId?: bigint): Promise<void> {
           abi: agentCoinAbi,
           functionName: "balanceOf",
           args: [account.address],
+        }) as Promise<bigint>)
+      : Promise.resolve(0n),
+    payout
+      ? (publicClient.readContract({
+          address: config.agentCoinAddress,
+          abi: agentCoinAbi,
+          functionName: "balanceOf",
+          args: [payout],
         }) as Promise<bigint>)
       : Promise.resolve(0n),
   ]);
@@ -82,6 +92,8 @@ export async function displayStats(tokenId?: bigint): Promise<void> {
     ui.table([
       ["Address", `${account.address.slice(0, 6)}...${account.address.slice(-4)}`],
       ["AGENT balance", `${Number(formatEther(walletBalance)).toLocaleString()} AGENT`],
+      ["Payout", payout ? `${payout.slice(0, 6)}...${payout.slice(-4)}` : "(not configured)"],
+      ["Payout AGENT", payout ? `${Number(formatEther(payoutBalance)).toLocaleString()} AGENT` : "-"],
     ]);
   }
 
