@@ -65,8 +65,10 @@ Treat the mining wallet as a hot operational key with a narrow job: own one rig,
 2. Never write a raw private key or keystore password into `.env`, chat, logs, scripts, or docs.
 3. For headless agents, prefer `KEYSTORE_PASSWORD_CMD` so the password comes from macOS Keychain, Linux Secret Service, or another process secret manager.
 4. Set a cold payout address with `npx apow-cli wallet payout set 0x...`.
-5. Mine normally. When payout is configured, auto-sweep moves AGENT out of the hot wallet after confirmed mines.
+5. Mine normally. When payout is configured, auto-sweep moves AGENT out of the hot wallet after confirmed mines once AGENT transfers unlock (see the transfer lock note below).
 6. Use `npx apow-cli wallet sweep` for manual AGENT sweeps, or `--all` to also move excess ETH and USDC working balances.
+
+AGENT transfer lock: the AgentCoin contract freezes all AGENT transfers until the protocol's Uniswap LP deploys (5 ETH of rig-mint fees accumulated in the LP vault). Until then mined AGENT cannot move — not by you, and not by anyone who compromises the key. The CLI reads the on-chain `lpDeployed` flag and skips AGENT sweeps while transfers are locked, then activates them automatically once the pool is live; no restart or reconfiguration needed. ETH and USDC sweeps (`--all`) work the whole time, so configure payout now even though AGENT stays put until pool-live.
 
 Default policy lives at `~/.apow/policy.json`. Audit and spend ledgers are append-only local files at `~/.apow/audit-<address>.jsonl` and `~/.apow/spend-<address>.jsonl`. The built-in guard allows APoW `mine`, rig `getChallenge`/`mint`, configured payout sweeps, bounded funding swaps, and capped USDC EIP-3009 x402 payments. It denies raw hash signing, message signing, Permit, Permit2, unknown contracts, and over-budget x402 payments.
 
@@ -331,7 +333,7 @@ CHAIN=base
 | `PRIVATE_KEY` | Legacy fallback only | - | Raw wallet private key (0x + 64 hex chars). Supported for compatibility, but generated wallets should use `KEYSTORE_PATH`. |
 | `APOW_POLICY` | No | `enforce` | Runtime policy mode override: `enforce`, `warn`, or `off`. Use `warn` only for soak/debug. |
 | `APOW_POLICY_PATH` | No | `~/.apow/policy.json` | Override local signing policy file path. |
-| `APOW_PAYOUT_ADDRESS` | No | policy file value | Cold wallet address that receives AGENT sweeps. |
+| `APOW_PAYOUT_ADDRESS` | No | policy file value | Cold wallet address that receives sweeps. AGENT sweeps activate at pool-live; ETH/USDC sweeps work immediately. |
 | `APOW_SWEEP_THRESHOLD_AGENT` | No | `25` | Auto-sweep threshold once payout is configured. |
 | `APOW_X402_DAILY_USDC` | No | `20` | Daily x402 signature budget. |
 | `APOW_X402_MAX_PER_REQUEST_USDC` | No | `1` | Per-payment x402 cap. |

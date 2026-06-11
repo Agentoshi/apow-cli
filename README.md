@@ -135,7 +135,7 @@ See [.env.example](.env.example) for all options.
 Mining requires a hot EOA because the immutable APoW contracts require direct wallet signatures. Wallet Protocol v2 limits that hot wallet's blast radius:
 
 - every transaction and x402 typed-data signature goes through a local policy guard;
-- mined AGENT can be swept to a separate payout address with `apow wallet payout set <addr>`;
+- mined AGENT can be swept to a separate payout address with `apow wallet payout set <addr>` — AGENT transfers are frozen on-chain until the LP pool deploys, so the CLI skips AGENT sweeps until `lpDeployed` flips and then activates them automatically (ETH/USDC sweeps via `--all` work immediately);
 - audit and spend ledgers are written under `~/.apow/audit-<address>.jsonl` and `~/.apow/spend-<address>.jsonl`;
 - child grinder and local LLM processes do not receive `PRIVATE_KEY`, `KEYSTORE_PASSWORD`, or `APOW_KEYSTORE_PASSWORD`;
 - plaintext exports require `--i-understand-plaintext-risk` and an interactive `PLAINTEXT` confirmation.
