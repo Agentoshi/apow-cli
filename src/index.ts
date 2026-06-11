@@ -13,6 +13,7 @@ import { config, isExpensiveModel, reloadConfig, resolveDefaultModel, writeEnvFi
 import { MIN_ETH, MIN_USDC } from "./bridge/constants";
 import { getUsdcBalance } from "./bridge/uniswap";
 import { detectMiners, detectMinersWithClient, formatHashpower, selectBestMiner } from "./detect";
+import { errorText } from "./errors";
 import { txUrl } from "./explorer";
 import { runFundFlow } from "./fund";
 import { runMintFlow } from "./mint";
@@ -160,8 +161,7 @@ async function unlockConfiguredKeystoreIfNeeded(): Promise<boolean> {
     reinitClients();
     return !!account && !!config.privateKey;
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    ui.error(`Could not unlock encrypted keystore: ${message}`);
+    ui.error(`Could not unlock encrypted keystore: ${errorText(error)}`);
     return false;
   }
 }
@@ -232,8 +232,7 @@ async function setupWizard(): Promise<void> {
       addr = walletAccount.address;
       keystorePath = resolveKeystorePath(inputPath);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      ui.error(`Could not unlock keystore: ${message}`);
+      ui.error(`Could not unlock keystore: ${errorText(error)}`);
       return;
     }
   } else if (walletMode === "3") {
@@ -1237,7 +1236,6 @@ function detectWallets(scanDir: string): { addresses: string[]; newCount: number
 }
 
 main().catch((error) => {
-  const message = error instanceof Error ? error.message : String(error);
-  ui.error(message);
+  ui.error(errorText(error));
   process.exitCode = 1;
 });

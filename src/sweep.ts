@@ -5,6 +5,7 @@ import agentCoinAbiJson from "./abi/AgentCoin.json";
 import { TOKENS } from "./bridge/constants";
 import { config } from "./config";
 import { txUrl } from "./explorer";
+import { errorText } from "./errors";
 import { createLpUnlockGate } from "./lp-gate";
 import { setSignerContext } from "./policy/context";
 import { getPayoutAddress, loadPolicy } from "./policy/policy";
@@ -146,8 +147,7 @@ export async function maybeAutoSweep(mineCount: number): Promise<void> {
   } catch (error) {
     autoSweepFailures += 1;
     nextAutoSweepMine = mineCount + 50;
-    const message = error instanceof Error ? error.message : String(error);
-    ui.warn(`Auto-sweep skipped: ${message}`);
+    ui.warn(`Auto-sweep skipped: ${errorText(error)}`);
   }
 }
 

@@ -233,8 +233,19 @@ const patterns: Array<{
   },
 ];
 
+// Keyed RPC endpoints embed credentials in the URL path. Keep scheme+host so
+// errors stay debuggable, drop everything after — terminal output may be
+// public (streams, logs, screenshots).
+export function redactUrls(text: string): string {
+  return text.replace(/(https?:\/\/[^/\s"']+)[^\s"')]*/g, "$1/…");
+}
+
+export function errorText(error: unknown): string {
+  return redactUrls(error instanceof Error ? error.message : String(error));
+}
+
 export function classifyError(error: unknown): ClassifiedError {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorText(error);
 
   for (const pattern of patterns) {
     if (pattern.test(message)) {

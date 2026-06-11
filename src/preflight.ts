@@ -6,6 +6,7 @@ import { base } from "viem/chains";
 import agentCoinAbiJson from "./abi/AgentCoin.json";
 import miningAgentAbiJson from "./abi/MiningAgent.json";
 import { config } from "./config";
+import { redactUrls } from "./errors";
 import { getGrindUrl, isHttpGrinderConfigured } from "./grinder-http";
 import { loadPolicy } from "./policy/policy";
 import { spentTodayUsdc } from "./policy/spend-ledger";
@@ -133,7 +134,7 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
       }
     } catch {
       results.push({
-        label: `RPC unreachable — could not connect to ${config.useX402 ? "QuickNode x402" : config.rpcUrl}`,
+        label: `RPC unreachable — could not connect to ${config.useX402 ? "QuickNode x402" : redactUrls(config.rpcUrl)}`,
         passed: false,
         fix: config.useX402
           ? "Check internet connection and USDC balance, or set RPC_URL in .env for a custom RPC"
