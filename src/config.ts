@@ -121,7 +121,9 @@ function resolveKeystorePassword(): string {
     const result = spawnSync(command, {
       shell: true,
       encoding: "utf8",
-      timeout: 10_000,
+      // Generous timeout: the command may trigger an interactive macOS Keychain
+      // authorization dialog (Touch ID / password) that the user must satisfy.
+      timeout: 60_000,
       stdio: ["ignore", "pipe", "ignore"],
     });
     if (result.status === 0 && result.stdout.trim()) {
@@ -265,6 +267,13 @@ export function reloadConfig(): AppConfig {
   return config;
 }
 
+// True only when an x402 pay-per-call service is configured (USDC is spent):
+// QuickNode x402 RPC, x402 GPU grind, or the ClawRouter x402 LLM. When false,
+// funding is ETH-only — the user never needs USDC.
+export function usdcRequired(c: AppConfig = config): boolean {
+  return c.useX402 || c.useX402Grind || c.llmProvider === "clawrouter";
+}
+
 export function requirePrivateKey(): Hex {
   if (!config.privateKey) {
     throw new Error("An unlocked wallet signer is required. Configure KEYSTORE_PATH plus KEYSTORE_PASSWORD, or use legacy PRIVATE_KEY.");
@@ -295,7 +304,10 @@ export function isExpensiveModel(model: string): boolean {
 
 export async function writeEnvFile(values: Record<string, string>): Promise<void> {
   for (const [key, value] of Object.entries(values)) {
-    if (/KEYSTORE_PASSWORD/i.test(key)) {
+    // Block the actual password (KEYSTORE_PASSWORD / APOW_KEYSTORE_PASSWORD) but
+    // allow the *_CMD reference — a command that fetches the password (e.g. from
+    // the macOS Keychain) is not itself a secret.
+    if (/KEYSTORE_PASSWORD/i.test(key) && !/_CMD$/i.test(key)) {
       throw new Error(`${key} must not be written to .env. Use KEYSTORE_PASSWORD_CMD or a shell secret manager.`);
     }
     if (key === "PRIVATE_KEY" && value.trim()) {

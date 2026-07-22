@@ -24,13 +24,16 @@ export const SQUID_ROUTES = {
     srcDecimals: 9,
     dstDecimals: 18,
   },
-  sol_usdc_to_base_usdc: {
+  // Solana USDC bridges straight to ETH on Base (Squid swaps cross-chain), so it
+  // lands as gas-ready ETH — no on-Base USDC→ETH swap (which a 0-ETH wallet
+  // could never pay for).
+  sol_usdc_to_eth: {
     fromChain: CHAIN_IDS.solana,
     fromToken: TOKENS.solana.usdc,
     toChain: CHAIN_IDS.base,
-    toToken: TOKENS.base.usdc,
+    toToken: TOKENS.base.nativeSquid,
     srcDecimals: 6,
-    dstDecimals: 6,
+    dstDecimals: 18,
   },
   eth_to_base_eth: {
     fromChain: CHAIN_IDS.ethereum,

@@ -2,19 +2,26 @@
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { Command } from "commander";
 
 import type { Abi, Address } from "viem";
 import { createPublicClient, formatEther, formatUnits, getAddress, http, parseEther } from "viem";
 
 import miningAgentAbiJson from "./abi/MiningAgent.json";
-import { config, isExpensiveModel, reloadConfig, resolveDefaultModel, writeEnvFile, type LlmProvider } from "./config";
+import { config, reloadConfig, resolveDefaultModel, usdcRequired, writeEnvFile, type LlmProvider } from "./config";
 import { MIN_ETH, MIN_USDC } from "./bridge/constants";
 import { getUsdcBalance } from "./bridge/uniswap";
 import { detectMiners, detectMinersWithClient, formatHashpower, selectBestMiner } from "./detect";
 import { errorText } from "./errors";
 import { txUrl } from "./explorer";
+import { detectGrinders, grinderLabel, hasNativeGrinders } from "./grinder-native";
+import {
+  generateKeystorePassword,
+  isKeychainUsable,
+  keychainPasswordCommand,
+  storeKeystorePasswordInKeychain,
+} from "./keychain";
 import { runFundFlow } from "./fund";
 import { runMintFlow } from "./mint";
 import { startMining } from "./miner";
@@ -121,20 +128,55 @@ async function saveKeystoreWithPassword(
   return saveEncryptedKeystoreFile(address, privateKey, password);
 }
 
+// Acquire the password that encrypts a NEW keystore. On macOS we generate a
+// strong random password, store it in the Keychain, and return the command that
+// retrieves it (to wire as KEYSTORE_PASSWORD_CMD) — the user is never asked to
+// type a secret. Elsewhere we fall back to the interactive typed-password flow.
+async function provisionKeystorePassword(
+  address: `0x${string}`,
+  required: boolean,
+): Promise<{ password: string; passwordCmd?: string } | null> {
+  if (isKeychainUsable()) {
+    try {
+      const password = generateKeystorePassword();
+      storeKeystorePasswordInKeychain(address, password);
+      return { password, passwordCmd: keychainPasswordCommand(address) };
+    } catch (error) {
+      // Never let a Keychain hiccup abort setup or surface a scary dialog —
+      // quietly fall back to the interactive password flow.
+      ui.warn(`macOS Keychain unavailable (${errorText(error)}); using a typed password instead.`);
+    }
+  }
+  const password = await getKeystorePassword(required);
+  if (!password) return null;
+  return { password };
+}
+
+// Prefer a free local LLM CLI for the mint puzzle if one is installed, so the
+// streamlined wizard doesn't have to ask. Returns null if none is on PATH.
+function detectLocalLlm(): LlmProvider | null {
+  const has = (cmd: string) => spawnSync(`command -v ${cmd}`, { shell: true, stdio: "ignore" }).status === 0;
+  if (has("codex")) return "codex";
+  if (has("claude")) return "claude-code";
+  if (has("ollama")) return "ollama";
+  return null;
+}
+
 async function saveWalletArtifacts(
   address: `0x${string}`,
   privateKey: `0x${string}`,
   opts: { createPlaintextImportFile?: boolean; requireKeystore?: boolean } = {},
-): Promise<{ plaintextPath?: string; keystorePath?: string }> {
-  const result: { plaintextPath?: string; keystorePath?: string } = {};
+): Promise<{ plaintextPath?: string; keystorePath?: string; passwordCmd?: string }> {
+  const result: { plaintextPath?: string; keystorePath?: string; passwordCmd?: string } = {};
 
   if (opts.createPlaintextImportFile === true) {
     result.plaintextPath = savePlaintextImportFile(address, privateKey);
   }
 
-  const password = await getKeystorePassword(opts.requireKeystore === true);
-  if (password) {
-    result.keystorePath = await saveKeystoreWithPassword(address, privateKey, password);
+  const provisioned = await provisionKeystorePassword(address, opts.requireKeystore === true);
+  if (provisioned) {
+    result.keystorePath = await saveKeystoreWithPassword(address, privateKey, provisioned.password);
+    result.passwordCmd = provisioned.passwordCmd;
   } else if (opts.requireKeystore) {
     throw new Error("Encrypted keystore was not created.");
   }
@@ -206,36 +248,22 @@ async function setupWizard(): Promise<void> {
   console.log(`  ${ui.bold(`Step 1/${totalSteps}: Wallet`)}`);
   console.log(`  ${ui.dim("Your agent can manage a wallet for you, or you can supply your own.")}`);
   console.log("");
-  console.log(`  ${ui.cyan("1.")} Agent-managed encrypted wallet ${ui.dim("(generate one now)")}`);
-  console.log(`  ${ui.cyan("2.")} Existing encrypted keystore`);
-  console.log(`  ${ui.cyan("3.")} Existing private key ${ui.dim("(encrypt before saving)")}`);
+  console.log(`  ${ui.cyan("1.")} Generate agent-managed encrypted wallet ${ui.dim("(recommended)")}`);
+  console.log(`  ${ui.cyan("2.")} Existing private key ${ui.dim("(supply your own wallet)")}`);
   console.log("");
+  const keychainManaged = isKeychainUsable();
+  if (keychainManaged) {
+    console.log(`  ${ui.dim("The keystore password is generated and stored in your macOS Keychain.")}`);
+    console.log(`  ${ui.dim("apow never asks you to type it — macOS authorizes access when mining.")}`);
+    console.log("");
+  }
   const walletMode = await ui.prompt("Wallet choice", "1");
 
   let addr: string;
   let keystorePath: string | undefined;
+  let passwordCmd: string | undefined;
 
   if (walletMode === "2") {
-    const inputPath = await ui.prompt("Keystore path", process.env.KEYSTORE_PATH ?? "");
-    if (!inputPath) {
-      ui.error("Keystore path is required.");
-      return;
-    }
-    const password = await getKeystorePassword(true, false);
-    if (!password) {
-      return;
-    }
-    try {
-      const privateKey = loadEncryptedKeystoreFile(inputPath, password);
-      const { privateKeyToAccount } = await import("viem/accounts");
-      const walletAccount = privateKeyToAccount(privateKey);
-      addr = walletAccount.address;
-      keystorePath = resolveKeystorePath(inputPath);
-    } catch (error) {
-      ui.error(`Could not unlock keystore: ${errorText(error)}`);
-      return;
-    }
-  } else if (walletMode === "3") {
     const inputKey = await ui.promptSecret("Private key (0x-prefixed)");
     if (!inputKey) {
       ui.error("Private key is required.");
@@ -248,32 +276,40 @@ async function setupWizard(): Promise<void> {
     const { privateKeyToAccount } = await import("viem/accounts");
     const walletAccount = privateKeyToAccount(inputKey as `0x${string}`);
     addr = walletAccount.address;
-    const password = await getKeystorePassword(true);
-    if (!password) {
+    const provisioned = await provisionKeystorePassword(addr as `0x${string}`, true);
+    if (!provisioned) {
       return;
     }
-    keystorePath = await saveKeystoreWithPassword(addr as `0x${string}`, inputKey as `0x${string}`, password);
+    passwordCmd = provisioned.passwordCmd;
+    keystorePath = await saveKeystoreWithPassword(addr as `0x${string}`, inputKey as `0x${string}`, provisioned.password);
     console.log("");
     console.log(`  ${ui.dim(`Encrypted keystore saved to: ${keystorePath}`)}`);
-  } else {
-    const password = await getKeystorePassword(true);
-    if (!password) {
-      return;
+    if (keychainManaged) {
+      console.log(`  ${ui.dim("Keystore password stored in macOS Keychain.")}`);
     }
+  } else {
     const { generatePrivateKey, privateKeyToAccount } = await import("viem/accounts");
     const privateKey = generatePrivateKey();
     const walletAccount = privateKeyToAccount(privateKey);
     addr = walletAccount.address;
-    keystorePath = await saveKeystoreWithPassword(addr as `0x${string}`, privateKey, password);
+    const provisioned = await provisionKeystorePassword(addr as `0x${string}`, true);
+    if (!provisioned) {
+      return;
+    }
+    passwordCmd = provisioned.passwordCmd;
+    keystorePath = await saveKeystoreWithPassword(addr as `0x${string}`, privateKey, provisioned.password);
 
     console.log("");
     console.log(`  ${ui.bold("NEW WALLET GENERATED")}`);
     console.log("");
     console.log(`  Address:     ${addr}`);
     console.log(`  Keystore:    ${keystorePath}`);
+    if (keychainManaged) {
+      console.log(`  Password:    stored in macOS Keychain (apow never sees you type it)`);
+    }
     console.log("");
-    console.log(`  ${ui.dim("Import into Phantom, MetaMask, or any EVM wallet")}`);
-    console.log(`  ${ui.dim("later with: apow wallet export --show-private-key")}`);
+    console.log(`  ${ui.yellow("Back up now:")} ${ui.dim("apow wallet export --show-private-key")}`);
+    console.log(`  ${ui.dim("If you lose the Keychain entry, the keystore can't be unlocked.")}`);
     console.log("");
     console.log(`  ${ui.dim("Fund this address with ≥0.005 ETH on Base to start.")}`);
     console.log("");
@@ -282,6 +318,9 @@ async function setupWizard(): Promise<void> {
   values.PRIVATE_KEY = "";
   if (keystorePath) {
     values.KEYSTORE_PATH = keystorePath;
+  }
+  if (passwordCmd) {
+    values.KEYSTORE_PASSWORD_CMD = passwordCmd;
   }
   ui.ok(`Wallet: ${addr.slice(0, 6)}...${addr.slice(-4)}`);
   console.log("");
@@ -300,100 +339,91 @@ async function setupWizard(): Promise<void> {
     console.log(`  ${ui.dim("Easy mode is agent-first: no RPC key, no LLM key, no GPU rental setup.")}`);
     console.log(`  ${ui.dim("Fund the wallet with ETH + USDC on Base, then run: apow start")}`);
   } else {
-    // Advanced: user picks which services remain autonomous
-    // Step 2: RPC
+    // Advanced: one question (your RPC). Everything else is auto-detected.
     console.log(`  ${ui.bold(`Step 2/${totalSteps}: RPC`)}`);
-    console.log(`  ${ui.dim("Choose whether your agent pays for RPC via x402 or you provide your own endpoint.")}`);
+    console.log(`  ${ui.dim("Paste your Base RPC URL, or press Enter to let your wallet pay per call (x402).")}`);
     console.log("");
-    console.log(`  ${ui.cyan("1.")} Agent-managed x402 RPC ${ui.dim("(recommended)")}`);
-    console.log(`  ${ui.cyan("2.")} Custom RPC URL`);
-    console.log("");
-    const rpcMode = await ui.prompt("RPC choice", "1");
-
-    if (rpcMode === "2") {
-      const rpcUrl = await ui.prompt("RPC URL");
-      if (rpcUrl) {
-        values.RPC_URL = rpcUrl;
-        ui.ok(`RPC: Custom (${rpcUrl.slice(0, 40)}${rpcUrl.length > 40 ? "..." : ""})`);
-      } else {
-        ui.warn("No URL provided — using QuickNode x402");
-        values.USE_X402 = "true";
-        ui.ok("RPC: QuickNode x402");
-      }
+    const existingRpc = process.env.RPC_URL?.trim() ?? "";
+    const rpcUrl = (await ui.prompt("RPC URL (Enter = wallet-paid x402)", existingRpc)).trim();
+    if (rpcUrl) {
+      values.RPC_URL = rpcUrl;
+      ui.ok(`RPC: ${rpcUrl.replace(/(https?:\/\/[^/]+).*/, "$1/…")}`);
     } else {
       values.USE_X402 = "true";
-      ui.ok("RPC: QuickNode x402 (wallet-paid)");
+      ui.ok("RPC: wallet-paid x402");
     }
     console.log("");
 
-    // Step 3: LLM (for minting)
-    console.log(`  ${ui.bold(`Step 3/${totalSteps}: LLM (minting only)`)}`);
-    console.log(`  ${ui.dim("An LLM solves the SMHL challenge when minting your Mining Rig.")}`);
-    console.log(`  ${ui.dim("Mining uses optimized solving — no LLM needed after minting.")}`);
-    console.log(`  ${ui.dim("  clawrouter (recommended) — wallet-paid via x402")}`);
-    console.log(`  ${ui.dim("  openai / anthropic / gemini / deepseek / qwen — API key")}`);
-    console.log(`  ${ui.dim("  ollama / claude-code / codex — local")}`);
-    const providerInput = await ui.prompt("Provider", "clawrouter");
-    const provider = (["clawrouter", "openai", "anthropic", "gemini", "ollama", "deepseek", "qwen", "claude-code", "codex"].includes(providerInput) ? providerInput : "clawrouter") as LlmProvider;
+    // Step 3: Mint AI (LLM) — quick numbered pick; cloud default works for everyone.
+    console.log(`  ${ui.bold(`Step 3/${totalSteps}: Mint AI`)} ${ui.dim("(solves the mint puzzle once — not used while mining)")}`);
+    console.log("");
+    console.log(`  ${ui.cyan("1.")} ClawRouter   ${ui.dim("no API key, your wallet pays per solve  (easiest)")}`);
+    console.log(`  ${ui.cyan("2.")} OpenAI       ${ui.dim("API key")}`);
+    console.log(`  ${ui.cyan("3.")} Anthropic    ${ui.dim("API key")}`);
+    console.log(`  ${ui.cyan("4.")} Local        ${ui.dim("codex / claude-code / ollama")}`);
+    console.log(`  ${ui.cyan("5.")} More…        ${ui.dim("gemini / deepseek / qwen")}`);
+    console.log("");
+    const llmPick = (await ui.prompt("Pick", "1")).trim();
+    let provider: LlmProvider = "clawrouter";
+    if (llmPick === "2") provider = "openai";
+    else if (llmPick === "3") provider = "anthropic";
+    else if (llmPick === "4") {
+      const local = detectLocalLlm();
+      if (local) {
+        provider = local;
+      } else {
+        const which = (await ui.prompt("Which local — codex / claude-code / ollama", "codex")).trim();
+        provider = (["codex", "claude-code", "ollama"].includes(which) ? which : "codex") as LlmProvider;
+      }
+    } else if (llmPick === "5") {
+      const which = (await ui.prompt("Which — gemini / deepseek / qwen", "gemini")).trim();
+      provider = (["gemini", "deepseek", "qwen"].includes(which) ? which : "gemini") as LlmProvider;
+    }
     values.LLM_PROVIDER = provider;
+    values.LLM_MODEL = resolveDefaultModel(provider);
 
     if (provider === "clawrouter") {
-      ui.ok("ClawRouter x402 — no API key needed, pays with USDC from your wallet");
-      if (!values.USE_X402 && !values.RPC_URL) {
-        values.USE_X402 = "true";
-        ui.ok("Auto-enabled x402 RPC (same wallet, same USDC balance)");
-      }
+      ui.ok("ClawRouter — no API key, wallet pays per solve");
+      if (!values.RPC_URL) values.USE_X402 = "true";
     } else if (provider === "ollama") {
-      const ollamaUrl = await ui.prompt("Ollama URL", "http://127.0.0.1:11434");
-      values.OLLAMA_URL = ollamaUrl;
-      ui.ok(`Ollama at ${ollamaUrl}`);
-    } else if (provider === "claude-code" || provider === "codex") {
-      ui.ok(`Using local ${provider} CLI — make sure you're already authenticated`);
+      const url = (await ui.prompt("Ollama URL", "http://127.0.0.1:11434")).trim();
+      values.OLLAMA_URL = url;
+      ui.ok(`Ollama at ${url}`);
+    } else if (provider === "codex" || provider === "claude-code") {
+      ui.ok(`Local ${provider} — make sure it's installed and authenticated`);
     } else {
-      const apiKey = await ui.promptSecret("API key");
-      if (apiKey) {
-        values.LLM_API_KEY = apiKey;
-        ui.ok(`${provider} key set`);
+      const key = await ui.promptSecret(`${provider} API key`);
+      if (key) {
+        values.LLM_API_KEY = key;
+        ui.ok(`${provider} key saved`);
       } else {
-        ui.fail("No API key provided");
-        ui.hint("Set LLM_API_KEY in .env later");
+        ui.hint("No key entered — set LLM_API_KEY in .env before minting.");
       }
     }
-
-    const defaultModel = resolveDefaultModel(provider);
-    const model = await ui.prompt("Model", defaultModel);
-    values.LLM_MODEL = model;
-
-    if (isExpensiveModel(model)) {
-      ui.warn(`${model} is expensive. Consider gpt-4o-mini for lower cost.`);
-    }
-
     console.log("");
 
-    // Step 4: Nonce grinding strategy
-    console.log(`  ${ui.bold(`Step 4/${totalSteps}: GPU Grinding`)}`);
-    console.log(`  ${ui.dim("Choose how the miner should find nonces at current network difficulty.")}`);
+    // Step 4: GPU grinder — quick numbered pick; cloud default needs no install.
+    console.log(`  ${ui.bold(`Step 4/${totalSteps}: GPU grinder`)} ${ui.dim("(finds the mining nonce)")}`);
     console.log("");
-    console.log(`  ${ui.cyan("1.")} Agent-managed x402 GPU ${ui.dim("(recommended, no setup)")}`);
-    console.log(`  ${ui.cyan("2.")} Local / custom grinders only`);
-    console.log(`  ${ui.cyan("3.")} Hybrid ${ui.dim("(x402 GPU + local JS fallback)")}`);
+    console.log(`  ${ui.cyan("1.")} Cloud GPU    ${ui.dim("your wallet pays, nothing to install  (easiest)")}`);
+    console.log(`  ${ui.cyan("2.")} Local        ${ui.dim("Metal / CUDA / CPU on this machine")}`);
     console.log("");
-    const grindMode = await ui.prompt("Grinding choice", "1");
-
-    if (grindMode === "2") {
+    const grindPick = (await ui.prompt("Pick", "1")).trim();
+    values.ALLOW_LOCAL_FALLBACK_WITH_X402 = "false";
+    if (grindPick === "2") {
       values.USE_X402_GRIND = "false";
-      values.ALLOW_LOCAL_FALLBACK_WITH_X402 = "false";
-      ui.ok("Grinding: local/custom only");
-      ui.hint("Configure GPU_GRINDER_PATH, CUDA_GRINDER_PATH, or VAST_* yourself if needed.");
-    } else if (grindMode === "3") {
-      values.USE_X402_GRIND = "true";
-      values.ALLOW_LOCAL_FALLBACK_WITH_X402 = "true";
-      ui.ok("Grinding: x402 GPU with local JS fallback");
+      const grinders = detectGrinders();
+      if (hasNativeGrinders(grinders)) {
+        ui.ok(`Local grinder: ${grinderLabel(grinders)}`);
+      } else {
+        ui.warn("No local grinder binaries found yet.");
+        ui.hint("Run `apow build-grinders` to compile Metal/CPU grinders for this machine.");
+      }
     } else {
       values.USE_X402_GRIND = "true";
-      values.ALLOW_LOCAL_FALLBACK_WITH_X402 = "false";
-      ui.ok("Grinding: x402 GPU only");
+      ui.ok("Cloud GPU — wallet pays per grind");
     }
+    console.log("");
   }
 
   // Contract addresses
@@ -504,14 +534,14 @@ async function runStartFlow(): Promise<void> {
   }
 
   const needsEth = !balanceChecksAvailable || ethBalance < MIN_ETH;
-  const needsUsdc = config.useX402 && (!balanceChecksAvailable || usdcBalance < MIN_USDC);
+  const needsUsdc = usdcRequired() && (!balanceChecksAvailable || usdcBalance < MIN_USDC);
 
   if (needsEth || needsUsdc) {
     console.log(`  ${ui.yellow("Funding needed before minting.")}`);
     ui.table([
       ["Wallet", `${account.address.slice(0, 6)}...${account.address.slice(-4)}`],
       ["ETH", balanceChecksAvailable ? `${ethBalance.toFixed(6)} ETH${needsEth ? ` (need ≥${MIN_ETH})` : ""}` : "unknown (RPC check failed)"],
-      ["USDC", config.useX402 ? (balanceChecksAvailable ? `${usdcBalance.toFixed(2)} USDC${needsUsdc ? ` (need ≥${MIN_USDC})` : ""}` : "unknown (RPC check failed)") : "not required"],
+      ["USDC", usdcRequired() ? (balanceChecksAvailable ? `${usdcBalance.toFixed(2)} USDC${needsUsdc ? ` (need ≥${MIN_USDC})` : ""}` : "unknown (RPC check failed)") : "not required"],
     ]);
     console.log("");
 
@@ -761,11 +791,8 @@ async function main(): Promise<void> {
     .description("Generate a new encrypted Base wallet")
     .option("--show-private-key", "Print the private key after generation (unsafe except for immediate import)")
     .action(async (opts: { showPrivateKey?: boolean }) => {
-      const password = await getKeystorePassword(true);
-      if (!password) {
-        return;
-      }
-
+      // saveWalletArtifacts provisions the keystore password itself (macOS
+      // Keychain when available, otherwise an interactive prompt).
       const { generatePrivateKey, privateKeyToAccount } = await import("viem/accounts");
       const key = generatePrivateKey();
       const acct = privateKeyToAccount(key);
@@ -779,6 +806,9 @@ async function main(): Promise<void> {
       console.log(`  Address:     ${acct.address}`);
       if (artifacts.keystorePath) {
         console.log(`  Keystore:    ${artifacts.keystorePath}`);
+      }
+      if (artifacts.passwordCmd) {
+        console.log(`  Password:    stored in macOS Keychain`);
       }
       console.log("");
 
@@ -882,13 +912,18 @@ async function main(): Promise<void> {
         ui.error("No legacy PRIVATE_KEY wallet is loaded.");
         return;
       }
-      const password = await getKeystorePassword(true);
-      if (!password) return;
-      const keystorePath = await saveKeystoreWithPassword(account.address, config.privateKey, password);
-      await writeEnvFile({ PRIVATE_KEY: "", KEYSTORE_PATH: keystorePath });
+      const provisioned = await provisionKeystorePassword(account.address, true);
+      if (!provisioned) return;
+      const keystorePath = await saveKeystoreWithPassword(account.address, config.privateKey, provisioned.password);
+      const envUpdate: Record<string, string> = { PRIVATE_KEY: "", KEYSTORE_PATH: keystorePath };
+      if (provisioned.passwordCmd) envUpdate.KEYSTORE_PASSWORD_CMD = provisioned.passwordCmd;
+      await writeEnvFile(envUpdate);
       reloadConfig();
       reinitClients();
       ui.ok(`Encrypted keystore saved to ${keystorePath}`);
+      if (provisioned.passwordCmd) {
+        ui.hint("Keystore password stored in macOS Keychain; macOS will authorize unlocks.");
+      }
       ui.hint("Unset PRIVATE_KEY in your shell or process manager if it is exported outside .env.");
     });
 

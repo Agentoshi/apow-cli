@@ -15,7 +15,6 @@ import {
   type BaseAsset,
   type SourceChain,
   type SourceToken,
-  bridgeOutputAsset,
   MIN_ETH,
   MIN_USDC,
   SLIPPAGE_BPS,
@@ -24,7 +23,7 @@ import {
 import { SQUID_ROUTES, getDepositAddress, pollBridgeStatus } from "./bridge/squid";
 import { getUsdcBalance, swapEthToUsdc, swapUsdcToEth } from "./bridge/uniswap";
 import { account, getEthBalance } from "./wallet";
-import { config } from "./config";
+import { config, usdcRequired } from "./config";
 import * as ui from "./ui";
 
 export interface FundOptions {
@@ -49,7 +48,6 @@ function showNonInteractiveFundingExamples(): void {
   ui.warn("Headless funding needs an explicit route.");
   ui.hint("Choose the source chain and token up front, then rerun one of:");
   ui.hint("apow fund --chain base --token eth");
-  ui.hint("apow fund --chain base --token usdc");
   ui.hint("apow fund --chain solana --token sol");
   ui.hint("apow fund --chain solana --token usdc");
   ui.hint("apow fund --chain ethereum");
@@ -104,6 +102,9 @@ async function autoSplit(
 ): Promise<void> {
   if (noSwap) return;
   if (!account) return;
+  // ETH-only setup (no x402 service): the landed ETH is all that's needed —
+  // never swap any of it to USDC.
+  if (!usdcRequired()) return;
 
   const ethBal = Number(formatEther(await getEthBalance()));
   const usdcBal = Number(formatUnits(await getUsdcBalance(account.address), 6));
@@ -232,8 +233,9 @@ async function runSolanaFund(
   const prices = await fetchPrices();
   priceSpinner.stop(`ETH price: $${prices.ethPriceUsd.toFixed(0)}`);
 
+  // Both Solana sources (SOL and USDC) now bridge to ETH on Base.
   const route = sourceToken === "usdc"
-    ? SQUID_ROUTES.sol_usdc_to_base_usdc
+    ? SQUID_ROUTES.sol_usdc_to_eth
     : SQUID_ROUTES.sol_to_eth;
 
   const amount = sourceToken === "usdc"
@@ -338,11 +340,10 @@ async function runSolanaFund(
   );
 
   const received = result.received || deposit.expectedReceive;
-  const receivedAsset = sourceToken === "usdc" ? "USDC" : "ETH";
-  bridgeSpinner.stop(`Bridge complete! ${received} ${receivedAsset} arrived`);
+  bridgeSpinner.stop(`Bridge complete! ${received} ETH arrived`);
 
-  const outputAsset = bridgeOutputAsset(sourceToken);
-  await autoSplit(outputAsset, prices, false);
+  // Both Solana routes land ETH on Base now.
+  await autoSplit("eth", prices, false);
   await showFinalBalances();
 }
 
@@ -455,13 +456,10 @@ async function runEthereumFund(
 
 async function runBaseFund(
   baseAddress: string,
-  sourceToken: SourceToken,
   noSwap: boolean,
 ): Promise<void> {
-  const tokenLabel = sourceToken === "usdc" ? "USDC" : "ETH";
-
   console.log("");
-  console.log(`  ${ui.bold(`Send ${tokenLabel} on Base to this address:`)}`);
+  console.log(`  ${ui.bold("Send ETH on Base to this address:")}`);
   console.log("");
   console.log(`  ${ui.cyan(baseAddress)}`);
   console.log("");
@@ -470,43 +468,41 @@ async function runBaseFund(
 
   console.log("");
   console.log(`  ${ui.dim("Send from any wallet — Coinbase, MetaMask, Phantom, etc.")}`);
-  if (sourceToken === "usdc") {
-    console.log(`  ${ui.dim("Need at least 2 USDC for x402 RPC + some for ETH swap.")}`);
-  } else {
-    console.log(`  ${ui.dim("Need ~0.005 ETH to cover gas + USDC swap.")}`);
-  }
+  console.log(`  ${ui.dim("Send ~0.005 ETH — covers gas plus the one-time rig mint.")}`);
   console.log("");
 
-  const waitForDeposit = await ui.confirm("Wait for deposit and auto-split?");
+  const waitForDeposit = await ui.confirm("Wait for deposit?");
   if (!waitForDeposit) {
-    console.log(`  ${ui.dim("After sending, run:")} ${ui.cyan("apow fund --chain base")} to auto-split.`);
+    console.log(`  ${ui.dim("After sending, run:")} ${ui.cyan("apow start")} to continue.`);
     console.log("");
     return;
   }
 
   const prices = await fetchPrices();
 
-  // Poll for balance change
-  const depositSpinner = ui.spinner(`Waiting for ${tokenLabel} deposit... (Ctrl+C to cancel)`);
+  const depositSpinner = ui.spinner("Waiting for ETH deposit... (Ctrl+C to cancel)");
   const initialEth = await getEthBalance();
   const initialUsdc = account ? await getUsdcBalance(account.address) : 0n;
   const depositDeadline = Date.now() + 600_000;
   let depositDetected = false;
+  let usdcSeen = false;
 
   while (!depositDetected && Date.now() < depositDeadline) {
     await new Promise((r) => setTimeout(r, 3000));
     try {
-      if (sourceToken === "usdc" && account) {
+      const currentEth = await getEthBalance();
+      if (currentEth > initialEth + parseEther("0.0001")) {
+        depositDetected = true;
+        depositSpinner.stop(`Deposit received! ${formatEther(currentEth - initialEth)} ETH`);
+        break;
+      }
+      // Forgiving: if USDC shows up but there's still no ETH for gas, say so
+      // instead of silently waiting out the clock.
+      if (account && !usdcSeen) {
         const currentUsdc = await getUsdcBalance(account.address);
-        if (currentUsdc > initialUsdc + 100000n) { // > 0.1 USDC
-          depositDetected = true;
-          depositSpinner.stop(`Deposit received! ${formatUnits(currentUsdc - initialUsdc, 6)} USDC`);
-        }
-      } else {
-        const currentEth = await getEthBalance();
-        if (currentEth > initialEth + parseEther("0.0001")) {
-          depositDetected = true;
-          depositSpinner.stop(`Deposit received! ${formatEther(currentEth - initialEth)} ETH`);
+        if (currentUsdc > initialUsdc + 100000n) {
+          usdcSeen = true;
+          depositSpinner.update("USDC received — but a Base wallet needs ETH for gas. Send ~0.002 ETH here, or bridge from Solana/Ethereum.");
         }
       }
     } catch {
@@ -515,12 +511,14 @@ async function runBaseFund(
   }
 
   if (!depositDetected) {
-    depositSpinner.fail(`No ${tokenLabel} deposit detected after 10 minutes`);
+    depositSpinner.fail("No ETH deposit detected after 10 minutes");
+    if (usdcSeen) {
+      ui.hint("You sent USDC. A Base wallet can't pay gas with USDC — send a little ETH here, or fund via Solana/Ethereum (those convert to ETH automatically).");
+    }
     return;
   }
 
-  const outputAsset = bridgeOutputAsset(sourceToken);
-  await autoSplit(outputAsset, prices, noSwap);
+  await autoSplit("eth", prices, noSwap);
   await showFinalBalances();
 }
 
@@ -532,7 +530,7 @@ async function selectSourceChain(): Promise<SourceChain> {
   console.log("  Where are your funds?");
   console.log(`    ${ui.cyan("1.")} Solana (SOL or USDC)`);
   console.log(`    ${ui.cyan("2.")} Ethereum mainnet (ETH)`);
-  console.log(`    ${ui.cyan("3.")} Base (send ETH or USDC directly)`);
+  console.log(`    ${ui.cyan("3.")} Base (send ETH)`);
   console.log("");
 
   const choice = await ui.prompt("Choice", "1");
@@ -542,13 +540,14 @@ async function selectSourceChain(): Promise<SourceChain> {
 }
 
 async function selectSourceToken(chain: SourceChain): Promise<SourceToken> {
-  // Ethereum only supports native ETH — skip token prompt
-  if (chain === "ethereum") return "native";
+  // Ethereum and Base direct are ETH-only. Direct-Base-USDC is removed: a 0-ETH
+  // wallet can't pay gas to swap it, and there's no bridge step to convert it.
+  if (chain === "ethereum" || chain === "base") return "native";
 
-  const nativeLabel = chain === "solana" ? "SOL" : "ETH";
+  // Solana can fund from SOL or USDC; both bridge to ETH on Base.
   console.log("");
   console.log("  What token?");
-  console.log(`    ${ui.cyan("1.")} ${nativeLabel}`);
+  console.log(`    ${ui.cyan("1.")} SOL`);
   console.log(`    ${ui.cyan("2.")} USDC`);
   console.log("");
 
@@ -610,15 +609,19 @@ export async function runFundFlow(options: FundOptions): Promise<void> {
   ui.banner(["Fund Your Mining Wallet"]);
   console.log("");
 
-  ui.table([
+  const needUsdc = usdcRequired();
+  const rows: [string, string][] = [
     ["Wallet", `${baseAddress.slice(0, 6)}...${baseAddress.slice(-4)}`],
-    ["ETH", `${ethBalance.toFixed(6)} ETH${ethBalance < MIN_ETH ? ` (need ≥${MIN_ETH} for gas)` : ""}`],
-    ["USDC", `${usdcBalance.toFixed(2)} USDC${usdcBalance < MIN_USDC ? ` (need ≥${MIN_USDC} for x402 RPC)` : ""}`],
-  ]);
+    ["ETH", `${ethBalance.toFixed(6)} ETH${ethBalance < MIN_ETH ? ` (need ≥${MIN_ETH} for gas + mint)` : ""}`],
+  ];
+  if (needUsdc) {
+    rows.push(["USDC", `${usdcBalance.toFixed(2)} USDC${usdcBalance < MIN_USDC ? ` (need ≥${MIN_USDC} for x402 — auto-bought from your ETH)` : ""}`]);
+  }
+  ui.table(rows);
   console.log("");
 
-  // Already funded?
-  if (ethBalance >= MIN_ETH && usdcBalance >= MIN_USDC) {
+  // Already funded? ETH always required; USDC only when an x402 service is on.
+  if (ethBalance >= MIN_ETH && (!needUsdc || usdcBalance >= MIN_USDC)) {
     console.log(`  ${ui.green("Already funded! Ready to mint.")}`);
     console.log(`  Next: ${ui.cyan("apow mint")}`);
     console.log("");
@@ -640,6 +643,11 @@ export async function runFundFlow(options: FundOptions): Promise<void> {
     token = await selectSourceToken(chain);
   }
 
+  // Direct-Base funding is ETH-only (no direct-USDC); ignore a stray --token usdc.
+  if (chain === "base") {
+    token = "native";
+  }
+
   // Route to the appropriate flow
   switch (chain) {
     case "solana": {
@@ -653,7 +661,7 @@ export async function runFundFlow(options: FundOptions): Promise<void> {
     }
 
     case "base": {
-      await runBaseFund(baseAddress, token, noSwap);
+      await runBaseFund(baseAddress, noSwap);
       break;
     }
   }
