@@ -1,6 +1,6 @@
 ---
 name: apow-mining
-description: Use APoW's existing Easy Mode to prepare one encrypted low-balance wallet, pause for user funding, then run policy-capped AGENT mining on Base.
+description: This skill teaches your agent how to mine $AGENT coin via the apow-cli.
 allowed-tools: Bash(npx --yes apow-cli@0.12.0 start --easy)
 metadata:
   openclaw:
