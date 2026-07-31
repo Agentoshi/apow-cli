@@ -35,6 +35,10 @@ const BASE_REWARD = 3n * 10n ** 18n;
 const REWARD_DECAY_NUM = 90n;
 const REWARD_DECAY_DEN = 100n;
 
+export interface MiningOptions {
+  easyMode?: boolean;
+}
+
 function elapsedSeconds(start: [number, number]): number {
   const [seconds, nanoseconds] = process.hrtime(start);
   return seconds + nanoseconds / 1_000_000_000;
@@ -298,7 +302,7 @@ async function showStartupBanner(tokenId: bigint): Promise<StartupContext> {
   };
 }
 
-export async function startMining(tokenId: bigint): Promise<void> {
+export async function startMining(tokenId: bigint, options: MiningOptions = {}): Promise<void> {
   const { account, walletClient } = requireWallet();
   let consecutiveFailures = 0;
   let successfulMines = 0;
@@ -380,10 +384,14 @@ export async function startMining(tokenId: bigint): Promise<void> {
     console.log(`    2. Add USDC to wallet for x402 GPU mining (~20 GH/s, ~$0.006/mine)`);
     console.log(`    3. Set up VAST.ai CUDA for ~20 GH/s (see docs)`);
     console.log("");
-    const proceed = await ui.confirm("Mining is strongly discouraged at this speed. Continue anyway?");
-    if (!proceed) {
-      console.log(`  ${ui.dim("Exiting. Build faster grinders and try again.")}`);
-      return;
+    if (!options.easyMode) {
+      const proceed = await ui.confirm("Mining is strongly discouraged at this speed. Continue anyway?");
+      if (!proceed) {
+        console.log(`  ${ui.dim("Exiting. Build faster grinders and try again.")}`);
+        return;
+      }
+    } else {
+      ui.hint("Easy Mode is continuing; add a faster grinder to improve results.");
     }
   } else if (estimatedSeconds > staleCheckSeconds) {
     console.log("");
@@ -395,10 +403,14 @@ export async function startMining(tokenId: bigint): Promise<void> {
     console.log(`    2. Add USDC to wallet for x402 GPU mining (~20 GH/s, ~$0.006/mine)`);
     console.log(`    3. Set up VAST.ai CUDA for ~20 GH/s (see docs)`);
     console.log("");
-    const proceed = await ui.confirm("Continue anyway?");
-    if (!proceed) {
-      console.log(`  ${ui.dim("Exiting. Build faster grinders and try again.")}`);
-      return;
+    if (!options.easyMode) {
+      const proceed = await ui.confirm("Continue anyway?");
+      if (!proceed) {
+        console.log(`  ${ui.dim("Exiting. Build faster grinders and try again.")}`);
+        return;
+      }
+    } else {
+      ui.hint("Easy Mode is continuing; add a faster grinder to improve results.");
     }
   }
 

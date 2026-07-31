@@ -1,12 +1,10 @@
 import * as http from "node:http";
-import { readFileSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 import { createPublicClient, formatEther, getAddress, http as viemHttp, type Abi, type Address, type Transport } from "viem";
 import type { LocalAccount } from "viem/accounts";
 import { base } from "viem/chains";
 import { getDashboardHtml } from "./dashboard-html";
+import { loadGeneratedWalletAddresses } from "./wallet-store";
 import { createX402Transport } from "./x402";
-import { detectWalletAddressFromFilename } from "./wallet-store";
 
 import AgentCoinAbiJson from "./abi/AgentCoin.json";
 import MiningAgentAbiJson from "./abi/MiningAgent.json";
@@ -18,7 +16,6 @@ const RARITY_LABELS = ["Common", "Uncommon", "Rare", "Epic", "Mythic"] as const;
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 
 const DEFAULT_RPC = ""; // No default public RPC — user must set RPC_URL or USE_X402
-const FLEETS_PATH = join(process.env.HOME ?? "", ".apow", "fleets.json");
 
 // --- Types ---
 
@@ -40,157 +37,24 @@ interface WalletData {
   miners: MinerData[];
 }
 
-interface Fleet {
-  name: string;
-  addresses: Address[];
-}
-
-interface FleetConfig {
-  name: string;
-  type: "array" | "solkek" | "rigdirs" | "walletfiles";
-  path: string;
-}
-
 export interface DashboardOpts {
   port: number;
-  walletsPath: string;
   rpcUrl: string;
   useX402: boolean;
   signer?: LocalAccount;
-  legacyPrivateKey?: `0x${string}`;
   miningAgentAddress: Address;
   agentCoinAddress: Address;
 }
 
-// --- Wallet / Fleet loading ---
+// --- Wallet loading ---
 
 function normalizeAddress(s: string): Address | null {
   if (!ADDR_RE.test(s)) return null;
   return getAddress(s.toLowerCase()) as Address;
 }
 
-function extractArray(path: string): Address[] {
-  const raw = readFileSync(path, "utf8");
-  const data = JSON.parse(raw);
-  if (!Array.isArray(data)) return [];
-  return data.flatMap((a) => (typeof a === "string" ? normalizeAddress(a) ?? [] : []));
-}
-
-function extractSolkek(path: string): Address[] {
-  const raw = readFileSync(path, "utf8");
-  const data = JSON.parse(raw);
-  const addrs: Address[] = [];
-  const masterAddress = typeof data.master?.address === "string" ? normalizeAddress(data.master.address) : null;
-  if (masterAddress) {
-    addrs.push(masterAddress);
-  }
-  if (Array.isArray(data.miners)) {
-    for (const m of data.miners) {
-      const address = typeof m.address === "string" ? normalizeAddress(m.address) : null;
-      if (address) {
-        addrs.push(address);
-      }
-    }
-  }
-  return addrs;
-}
-
-function extractRigdirs(dir: string): Address[] {
-  const addrs: Address[] = [];
-  const entries = readdirSync(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isDirectory() || !entry.name.startsWith("rig")) continue;
-    const rigFiles = readdirSync(join(dir, entry.name));
-    for (const file of rigFiles) {
-      const address = detectWalletAddressFromFilename(file);
-      const normalized = address ? normalizeAddress(address) : null;
-      if (normalized) {
-        addrs.push(normalized);
-      }
-    }
-  }
-  return addrs;
-}
-
-function extractWalletfiles(dir: string): Address[] {
-  const addrs: Address[] = [];
-  const files = readdirSync(dir);
-  for (const file of files) {
-    const address = detectWalletAddressFromFilename(file);
-    const normalized = address ? normalizeAddress(address) : null;
-    if (normalized) {
-      addrs.push(normalized);
-    }
-  }
-  return addrs;
-}
-
-function getFleets(walletsPath: string): Fleet[] {
-  try {
-    const raw = readFileSync(FLEETS_PATH, "utf8");
-    const configs: FleetConfig[] = JSON.parse(raw);
-    return configs.map((cfg) => {
-      let addresses: Address[] = [];
-      try {
-        switch (cfg.type) {
-          case "array":
-            addresses = extractArray(cfg.path);
-            break;
-          case "solkek":
-            addresses = extractSolkek(cfg.path);
-            break;
-          case "rigdirs":
-            addresses = extractRigdirs(cfg.path);
-            break;
-          case "walletfiles":
-            addresses = extractWalletfiles(cfg.path);
-            break;
-        }
-      } catch {
-        // Skip broken fleet sources silently
-      }
-      return { name: cfg.name, addresses };
-    });
-  } catch {
-    return [{ name: "Main", addresses: getWalletAddresses(walletsPath) }];
-  }
-}
-
-function getWalletAddresses(walletsPath: string): Address[] {
-  try {
-    const raw = readFileSync(walletsPath, "utf8");
-    const data = JSON.parse(raw);
-    if (Array.isArray(data)) {
-      return data.flatMap((addr) => (typeof addr === "string" ? normalizeAddress(addr) ?? [] : []));
-    }
-    return [];
-  } catch {
-    return [];
-  }
-}
-
-function getAddressesForFleet(fleetName: string | null, walletsPath: string): Address[] {
-  if (!fleetName || fleetName === "All") {
-    const fleets = getFleets(walletsPath);
-    const seen = new Set<string>();
-    const all: Address[] = [];
-    for (const f of fleets) {
-      for (const addr of f.addresses) {
-        const lower = addr.toLowerCase();
-        if (!seen.has(lower)) {
-          seen.add(lower);
-          all.push(addr);
-        }
-      }
-    }
-    return all;
-  }
-
-  const fleets = getFleets(walletsPath);
-  const fleet = fleets.find((f) => f.name === fleetName);
-  if (fleet) return fleet.addresses;
-
-  return getWalletAddresses(walletsPath);
+function getWalletAddresses(): Address[] {
+  return loadGeneratedWalletAddresses().flatMap((address) => normalizeAddress(address) ?? []);
 }
 
 // --- Art parsing ---
@@ -208,10 +72,10 @@ function parseArtFromTokenUri(raw: string): string {
 // --- Server ---
 
 export function startDashboardServer(opts: DashboardOpts): http.Server {
-  const { port, walletsPath, rpcUrl, useX402, signer, legacyPrivateKey, miningAgentAddress, agentCoinAddress } = opts;
+  const { port, rpcUrl, useX402, signer, miningAgentAddress, agentCoinAddress } = opts;
 
   const transport: Transport = useX402 && signer
-    ? createX402Transport(signer, legacyPrivateKey)
+    ? createX402Transport(signer)
     : viemHttp(rpcUrl);
 
   const publicClient = createPublicClient({
@@ -279,8 +143,8 @@ export function startDashboardServer(opts: DashboardOpts): http.Server {
     return results;
   }
 
-  async function handleWallets(fleetParam: string | null): Promise<string> {
-    const addresses = getAddressesForFleet(fleetParam, walletsPath);
+  async function handleWallets(): Promise<string> {
+    const addresses = getWalletAddresses();
     if (addresses.length === 0) return "[]";
 
     // Phase 1: ETH balance + AGENT balance + NFT count (chunked)
@@ -473,14 +337,9 @@ export function startDashboardServer(opts: DashboardOpts): http.Server {
     });
   }
 
-  function handleFleets(): string {
-    const fleets = getFleets(walletsPath);
-    return JSON.stringify(fleets.map((f) => ({ name: f.name, walletCount: f.addresses.length })));
-  }
-
   function handleConfig(): string {
     const rpcIsDefault = !useX402 && rpcUrl === DEFAULT_RPC;
-    const walletCount = getWalletAddresses(walletsPath).length;
+    const walletCount = getWalletAddresses().length;
     return JSON.stringify({ rpcIsDefault, walletCount });
   }
 
@@ -505,21 +364,13 @@ export function startDashboardServer(opts: DashboardOpts): http.Server {
       }
 
       if (pathname === "/api/wallets") {
-        const fleet = url.searchParams.get("fleet");
-        const cacheKey = `wallets:${fleet ?? "All"}`;
-        const body = await cachedHandler(cacheKey, () => handleWallets(fleet));
+        const body = await cachedHandler("wallets", () => handleWallets());
         jsonResponse(res, body);
         return;
       }
 
       if (pathname === "/api/network") {
         const body = await cachedHandler("network", () => handleNetwork());
-        jsonResponse(res, body);
-        return;
-      }
-
-      if (pathname === "/api/fleets") {
-        const body = handleFleets();
         jsonResponse(res, body);
         return;
       }
@@ -538,6 +389,6 @@ export function startDashboardServer(opts: DashboardOpts): http.Server {
     }
   });
 
-  server.listen(port);
+  server.listen(port, "127.0.0.1");
   return server;
 }

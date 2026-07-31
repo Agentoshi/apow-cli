@@ -25,5 +25,14 @@ smhl-local-test.ts
 stress-test.ts
 testnet-llm-test.ts
 
-# Local-only tools (never commit)
-local/
+# Local tools are private by default; publish only the native grinder sources
+# required by `apow build-grinders`.
+local/*
+!local/gpu/
+!local/vast-setup.sh
+local/gpu/*
+!local/gpu/Makefile
+!local/gpu/grinder-cpu.c
+!local/gpu/grinder-cuda.cu
+!local/gpu/grinder.m
+!local/gpu/keccak.metal

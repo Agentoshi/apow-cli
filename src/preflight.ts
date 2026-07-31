@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import type { Abi, Address } from "viem";
 import { createPublicClient, formatEther, formatUnits, http, parseEther } from "viem";
 import { base } from "viem/chains";
@@ -10,6 +10,7 @@ import { redactUrls } from "./errors";
 import { getGrindUrl, isHttpGrinderConfigured } from "./grinder-http";
 import { loadPolicy } from "./policy/policy";
 import { spentTodayUsdc } from "./policy/spend-ledger";
+import { claudeSubscriptionEnv, codexSubscriptionEnv } from "./secure-env";
 import { publicClient, account } from "./wallet";
 import * as ui from "./ui";
 
@@ -38,12 +39,69 @@ interface CheckResult {
   fix?: string;
 }
 
-function hasLocalCli(command: string): boolean {
+function runLocalCliCheck(
+  command: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+): { passed: boolean; output: string } {
+  const result = spawnSync(command, args, {
+    encoding: "utf8",
+    env,
+    timeout: 5_000,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  return {
+    passed: result.status === 0,
+    output: `${result.stdout ?? ""}\n${result.stderr ?? ""}`,
+  };
+}
+
+function hasLocalCli(command: string, env: NodeJS.ProcessEnv): boolean {
+  return runLocalCliCheck(command, ["--version"], env).passed;
+}
+
+function hasClaudeSubscriptionAuth(): boolean {
+  const result = runLocalCliCheck("claude", ["auth", "status"], claudeSubscriptionEnv());
+  return result.passed && /claude\.ai|subscription/i.test(result.output);
+}
+
+function hasCodexSubscriptionAuth(): boolean {
+  const result = runLocalCliCheck("codex", ["login", "status"], codexSubscriptionEnv());
+  return result.passed && /chatgpt/i.test(result.output);
+}
+
+async function checkOllamaReadiness(): Promise<CheckResult> {
+  const endpoint = `${config.ollamaUrl.replace(/\/+$/, "")}/api/tags`;
   try {
-    execFileSync(command, ["--version"], { stdio: "ignore" });
-    return true;
+    const response = await fetch(endpoint, { signal: AbortSignal.timeout(3_000) });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const data = (await response.json()) as {
+      models?: Array<{ name?: string; model?: string }>;
+    };
+    const expected = config.llmModel.split(":")[0];
+    const installed = (data.models ?? []).some(({ name, model }) => {
+      const candidate = name ?? model ?? "";
+      return candidate === config.llmModel || candidate.split(":")[0] === expected;
+    });
+    if (!installed) {
+      return {
+        label: `LLM provider: ollama is missing ${config.llmModel}`,
+        passed: false,
+        fix: `Run \`ollama pull ${config.llmModel}\`, then retry`,
+      };
+    }
+    return {
+      label: `LLM provider: ollama (${config.llmModel}, local inference)`,
+      passed: true,
+    };
   } catch {
-    return false;
+    return {
+      label: `LLM provider: ollama is unreachable at ${redactUrls(config.ollamaUrl)}`,
+      passed: false,
+      fix: "Install and start Ollama, then retry",
+    };
   }
 }
 
@@ -169,7 +227,7 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
       results.push({
         label: "Private key not configured",
         passed: false,
-        fix: "Run `apow setup` and choose Easy Mode, set KEYSTORE_PATH to an encrypted keystore, or set legacy PRIVATE_KEY in .env",
+        fix: "Run `apow setup` and choose Easy Mode, or set KEYSTORE_PATH to an encrypted keystore",
       });
     }
 
@@ -221,42 +279,56 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
       if (config.llmProvider === "clawrouter") {
         if (!account) {
           results.push({
-            label: "ClawRouter requires an unlocked wallet signer (wallet signs x402 payments)",
+            label: "The x402 LLM service requires an unlocked wallet signer",
             passed: false,
-            fix: "Unlock KEYSTORE_PATH with KEYSTORE_PASSWORD or set legacy PRIVATE_KEY in .env",
+            fix: "Unlock KEYSTORE_PATH with KEYSTORE_PASSWORD",
           });
         } else {
           results.push({
-            label: "LLM provider: clawrouter (x402, same wallet as mining)",
+            label: "LLM provider: automatic x402 model selection",
             passed: true,
           });
         }
       } else if (config.llmProvider === "ollama") {
-        results.push({ label: `LLM provider: ollama (${config.ollamaUrl})`, passed: true });
+        results.push(await checkOllamaReadiness());
       } else if (config.llmProvider === "claude-code") {
-        if (hasLocalCli("claude")) {
-          results.push({
-            label: "LLM provider: claude-code (local CLI detected; auth checked at mint time)",
-            passed: true,
-          });
-        } else {
+        const env = claudeSubscriptionEnv();
+        if (!hasLocalCli("claude", env)) {
           results.push({
             label: "LLM provider claude-code not installed",
             passed: false,
-            fix: "Install the Claude CLI or switch to LLM_PROVIDER=clawrouter",
+            fix: "Install Claude Code or switch to LLM_PROVIDER=clawrouter",
           });
-        }
-      } else if (config.llmProvider === "codex") {
-        if (hasLocalCli("codex")) {
+        } else if (hasClaudeSubscriptionAuth()) {
           results.push({
-            label: "LLM provider: codex (local CLI detected; auth/region checked at mint time)",
+            label: "LLM provider: Claude Code (Claude subscription authenticated)",
             passed: true,
           });
         } else {
           results.push({
+            label: "Claude Code is not signed in with a Claude subscription",
+            passed: false,
+            fix: "Run `claude login`, choose your Claude.ai subscription, then retry",
+          });
+        }
+      } else if (config.llmProvider === "codex") {
+        const env = codexSubscriptionEnv();
+        if (!hasLocalCli("codex", env)) {
+          results.push({
             label: "LLM provider codex not installed",
             passed: false,
-            fix: "Install the Codex CLI or switch to LLM_PROVIDER=clawrouter",
+            fix: "Install Codex CLI or switch to LLM_PROVIDER=clawrouter",
+          });
+        } else if (hasCodexSubscriptionAuth()) {
+          results.push({
+            label: "LLM provider: Codex (ChatGPT subscription authenticated)",
+            passed: true,
+          });
+        } else {
+          results.push({
+            label: "Codex is not signed in with ChatGPT",
+            passed: false,
+            fix: "Run `codex login`, choose ChatGPT subscription access, then retry",
           });
         }
       } else if (config.llmApiKey) {
@@ -265,7 +337,7 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
         results.push({
           label: `LLM API key not set for ${config.llmProvider}`,
           passed: false,
-          fix: "Set LLM_API_KEY in .env, or switch to LLM_PROVIDER=clawrouter (zero credentials, pays with USDC)",
+        fix: "Set LLM_API_KEY in .env, or switch to LLM_PROVIDER=clawrouter (no API key; wallet-paid in USDC)",
         });
       }
     }

@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout, stderr } from "node:process";
+import { StringDecoder } from "node:string_decoder";
 
 const isTTY = !!stdout.isTTY && !!stderr.isTTY;
 const isInteractive = !!stdin.isTTY && isTTY;
@@ -14,23 +15,29 @@ function wrap(code: number, reset: number): (s: string) => string {
   return (s) => `\x1b[${code}m${s}\x1b[${reset}m`;
 }
 
+function wrapRgb(red: number, green: number, blue: number): (s: string) => string {
+  if (noColor) return (s) => s;
+  return (s) => `\x1b[38;2;${red};${green};${blue}m${s}\x1b[39m`;
+}
+
 export const dim = wrap(2, 22);
 export const bold = wrap(1, 22);
-export const red = wrap(31, 39);
-export const green = wrap(32, 39);
-export const yellow = wrap(33, 39);
-export const cyan = wrap(36, 39);
+export const red = wrapRgb(252, 64, 31);
+export const green = wrapRgb(102, 200, 0);
+export const yellow = wrapRgb(255, 209, 47);
+export const cyan = wrapRgb(77, 159, 255);
+export const baseBlue = wrapRgb(0, 82, 255);
 
 export function banner(lines: string[]): void {
   if (!lines.length) return;
   const maxLen = Math.max(...lines.map((l) => l.length));
   const pad = (s: string) => s + " ".repeat(maxLen - s.length);
-  const border = "=".repeat(maxLen + 4);
-  console.log(`  ${dim(border)}`);
+  const border = `+${"-".repeat(maxLen + 2)}+`;
+  console.log(`  ${baseBlue(border)}`);
   for (const line of lines) {
-    console.log(`   ${pad(line)}`);
+    console.log(`  ${baseBlue("|")} ${bold(pad(line))} ${baseBlue("|")}`);
   }
-  console.log(`  ${dim(border)}`);
+  console.log(`  ${baseBlue(border)}`);
 }
 
 export function table(rows: [string, string][]): void {
@@ -114,12 +121,12 @@ export function stopAll(): void {
 }
 
 export async function confirm(question: string): Promise<boolean> {
-  if (!isInteractive) return true;
+  if (!isInteractive) return false;
   const rl = createInterface({ input: stdin, output: stderr });
-  const answer = await rl.question(`  ${question} ${dim("(Y/n)")} `);
+  const answer = await rl.question(`  ${question} ${dim("(y/N)")} `);
   rl.close();
   const trimmed = answer.trim().toLowerCase();
-  return trimmed === "" || trimmed === "y" || trimmed === "yes";
+  return trimmed === "y" || trimmed === "yes";
 }
 
 export async function prompt(question: string, defaultValue?: string): Promise<string> {
@@ -137,10 +144,142 @@ export async function promptSecret(question: string): Promise<string> {
   if (!isInteractive) {
     return "";
   }
-  const rl = createInterface({ input: stdin, output: stderr });
-  const answer = await rl.question(`  ${question}: `);
-  rl.close();
-  return answer.trim();
+  return readMaskedInput(`  ${question}: `);
+}
+
+type MaskedInputStream = NodeJS.ReadableStream & {
+  isRaw?: boolean;
+  readableFlowing?: boolean | null;
+  setRawMode?: (mode: boolean) => void;
+};
+
+type MaskedOutputStream = Pick<NodeJS.WritableStream, "write">;
+
+/**
+ * Read one secret value while rendering one asterisk per typed character.
+ * Exported for regression testing; interactive callers should use promptSecret().
+ */
+export function readMaskedInput(
+  promptText: string,
+  input: MaskedInputStream = stdin,
+  output: MaskedOutputStream = stderr,
+): Promise<string> {
+  output.write(promptText);
+
+  return new Promise<string>((resolve, reject) => {
+    const decoder = new StringDecoder("utf8");
+    const characters: string[] = [];
+    const wasRaw = input.isRaw === true;
+    const wasFlowing = input.readableFlowing === true;
+    let escapeState: "none" | "start" | "csi" | "ss3" = "none";
+    let settled = false;
+
+    const cleanup = () => {
+      input.removeListener("data", onData);
+      input.removeListener("end", onEnd);
+      input.removeListener("error", onError);
+      if (input.setRawMode) {
+        try {
+          input.setRawMode(wasRaw);
+        } catch {
+          // The stream may have closed while the prompt was active.
+        }
+      }
+      if (!wasFlowing) {
+        input.pause();
+      }
+    };
+
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      output.write("\n");
+      resolve(characters.join("").trim());
+    };
+
+    const interrupt = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      output.write("\n");
+      const error = Object.assign(new Error("Secret input interrupted."), { code: "SIGINT" });
+      reject(error);
+      process.kill(process.pid, "SIGINT");
+    };
+
+    const eraseCharacter = () => {
+      if (characters.length === 0) return;
+      characters.pop();
+      output.write("\b \b");
+    };
+
+    const onData = (chunk: string | Buffer) => {
+      const text = typeof chunk === "string" ? chunk : decoder.write(chunk);
+
+      for (const character of text) {
+        if (escapeState === "start") {
+          escapeState = character === "[" ? "csi" : character === "O" ? "ss3" : "none";
+          continue;
+        }
+        if (escapeState === "csi") {
+          const code = character.codePointAt(0) ?? 0;
+          if (code >= 0x40 && code <= 0x7e) escapeState = "none";
+          continue;
+        }
+        if (escapeState === "ss3") {
+          escapeState = "none";
+          continue;
+        }
+
+        if (character === "\u001b") {
+          escapeState = "start";
+          continue;
+        }
+        if (character === "\r" || character === "\n") {
+          finish();
+          break;
+        }
+        if (character === "\u0003") {
+          interrupt();
+          break;
+        }
+        if (character === "\u007f" || character === "\b") {
+          eraseCharacter();
+          continue;
+        }
+        if (character === "\u0015") {
+          while (characters.length > 0) eraseCharacter();
+          continue;
+        }
+
+        const code = character.codePointAt(0) ?? 0;
+        if (code < 0x20 || code === 0x7f) continue;
+        characters.push(character);
+        output.write("*");
+      }
+    };
+
+    const onEnd = () => finish();
+    const onError = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      output.write("\n");
+      reject(error);
+    };
+
+    input.on("data", onData);
+    input.once("end", onEnd);
+    input.once("error", onError);
+
+    try {
+      input.setRawMode?.(true);
+      input.resume();
+    } catch (error) {
+      onError(error instanceof Error ? error : new Error(String(error)));
+    }
+  });
 }
 
 export function ok(label: string): void {

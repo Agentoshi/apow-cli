@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { Command } from "commander";
@@ -9,13 +9,21 @@ import type { Abi, Address } from "viem";
 import { createPublicClient, formatEther, formatUnits, getAddress, http, parseEther } from "viem";
 
 import miningAgentAbiJson from "./abi/MiningAgent.json";
-import { config, isExpensiveModel, reloadConfig, resolveDefaultModel, writeEnvFile, type LlmProvider } from "./config";
+import {
+  config,
+  isExpensiveModel,
+  reloadConfig,
+  resolveDefaultModel,
+  resolveKeystorePassword,
+  writeEnvFile,
+  type LlmProvider,
+} from "./config";
 import { MIN_ETH, MIN_USDC } from "./bridge/constants";
-import { getUsdcBalance } from "./bridge/uniswap";
 import { detectMiners, detectMinersWithClient, formatHashpower, selectBestMiner } from "./detect";
 import { errorText } from "./errors";
 import { txUrl } from "./explorer";
 import { runFundFlow } from "./fund";
+import { resolveApiProvider, resolveLlmSetupMode, resolveLocalProvider } from "./llm-setup";
 import { runMintFlow } from "./mint";
 import { startMining } from "./miner";
 import { runPreflight } from "./preflight";
@@ -25,10 +33,25 @@ import { displayStats } from "./stats";
 import { runSweep } from "./sweep";
 import { warnIfUpdateAvailable } from "./update";
 import * as ui from "./ui";
-import { detectWalletAddressFromFilename, loadEncryptedKeystoreFile, resolveKeystorePath, saveEncryptedKeystoreFile, savePlaintextImportFile } from "./wallet-store";
+import { showBrandIntro } from "./brand-intro";
+import {
+  loadEncryptedKeystoreFile,
+  loadGeneratedWalletAddresses,
+  loadGeneratedWallets,
+  registerGeneratedWallet,
+  resolveKeystorePath,
+  saveEncryptedKeystoreFile,
+  type GeneratedWalletRecord,
+} from "./wallet-store";
 import { account, getEthBalance, publicClient, reinitClients, requireWallet } from "./wallet";
 import { setSignerContext } from "./policy/context";
-import { getPayoutAddress, loadPolicy, savePolicy, writeDefaultPolicyFile } from "./policy/policy";
+import {
+  getPayoutAddress,
+  loadPolicy,
+  savePolicy,
+  validateEasyModePolicyCaps,
+  writeDefaultPolicyFile,
+} from "./policy/policy";
 
 const miningAgentAbi = miningAgentAbiJson as Abi;
 const erc20BalanceAbi = [
@@ -74,16 +97,10 @@ function ensureGitignoreSafetyEntries(): void {
   ui.ok(`Updated .gitignore: added ${missing.join(", ")}`);
 }
 
-function getKeystorePasswordFromEnv(): string {
-  const envPassword = process.env.KEYSTORE_PASSWORD?.trim();
-  if (envPassword) return envPassword;
-  return process.env.APOW_KEYSTORE_PASSWORD?.trim() ?? "";
-}
-
 async function getKeystorePassword(required: boolean, confirmPassword = true): Promise<string | null> {
-  const envPassword = getKeystorePasswordFromEnv();
-  if (envPassword) {
-    return envPassword;
+  const configuredPassword = resolveKeystorePassword();
+  if (configuredPassword) {
+    return configuredPassword;
   }
 
   if (!ui.isInteractiveSession()) {
@@ -124,14 +141,9 @@ async function saveKeystoreWithPassword(
 async function saveWalletArtifacts(
   address: `0x${string}`,
   privateKey: `0x${string}`,
-  opts: { createPlaintextImportFile?: boolean; requireKeystore?: boolean } = {},
-): Promise<{ plaintextPath?: string; keystorePath?: string }> {
-  const result: { plaintextPath?: string; keystorePath?: string } = {};
-
-  if (opts.createPlaintextImportFile === true) {
-    result.plaintextPath = savePlaintextImportFile(address, privateKey);
-  }
-
+  opts: { requireKeystore?: boolean } = {},
+): Promise<{ keystorePath?: string }> {
+  const result: { keystorePath?: string } = {};
   const password = await getKeystorePassword(opts.requireKeystore === true);
   if (password) {
     result.keystorePath = await saveKeystoreWithPassword(address, privateKey, password);
@@ -166,12 +178,76 @@ async function unlockConfiguredKeystoreIfNeeded(): Promise<boolean> {
   }
 }
 
-async function confirmPrivateKeyDisplay(): Promise<boolean> {
-  if (!ui.isInteractiveSession()) {
-    return false;
+function isActiveGeneratedWallet(wallet: GeneratedWalletRecord): boolean {
+  return !!config.keystorePath
+    && resolveKeystorePath(config.keystorePath) === resolveKeystorePath(wallet.keystorePath);
+}
+
+function printGeneratedWallets(wallets: GeneratedWalletRecord[]): void {
+  console.log("");
+  console.log(`  ${ui.bold("APoW WALLETS")}`);
+  console.log("");
+  for (const [index, wallet] of wallets.entries()) {
+    const active = isActiveGeneratedWallet(wallet) ? ` ${ui.green("(active)")}` : "";
+    console.log(`  ${index + 1}. ${wallet.address}${active}`);
   }
-  const answer = await ui.prompt("Type SHOW to display your private key");
-  return answer === "SHOW";
+  console.log("");
+}
+
+function resolveGeneratedWalletSelection(
+  wallets: GeneratedWalletRecord[],
+  selection: string,
+): GeneratedWalletRecord | undefined {
+  if (/^\d+$/.test(selection)) {
+    const index = Number(selection) - 1;
+    return wallets[index];
+  }
+  if (!/^0x[0-9a-fA-F]{40}$/.test(selection)) {
+    return undefined;
+  }
+  return wallets.find((wallet) => wallet.address.toLowerCase() === selection.toLowerCase());
+}
+
+async function unlockGeneratedWallet(wallet: GeneratedWalletRecord): Promise<string | null> {
+  const configuredPassword = resolveKeystorePassword();
+  if (configuredPassword) {
+    try {
+      const privateKey = loadEncryptedKeystoreFile(wallet.keystorePath, configuredPassword);
+      const { privateKeyToAccount } = await import("viem/accounts");
+      if (privateKeyToAccount(privateKey).address.toLowerCase() === wallet.address.toLowerCase()) {
+        return configuredPassword;
+      }
+    } catch {
+      // This wallet may use a different password; prompt below when interactive.
+    }
+  }
+
+  if (!ui.isInteractiveSession()) {
+    ui.error("Could not unlock the selected wallet in this headless session.");
+    ui.hint("Provide its password through KEYSTORE_PASSWORD_CMD or a shell secret manager.");
+    return null;
+  }
+
+  const password = await ui.promptSecret(
+    `Keystore password for ${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`,
+  );
+  if (!password) {
+    ui.error("No keystore password entered.");
+    return null;
+  }
+
+  try {
+    const privateKey = loadEncryptedKeystoreFile(wallet.keystorePath, password);
+    const { privateKeyToAccount } = await import("viem/accounts");
+    if (privateKeyToAccount(privateKey).address.toLowerCase() !== wallet.address.toLowerCase()) {
+      ui.error("The selected keystore does not match its registered wallet address.");
+      return null;
+    }
+    return password;
+  } catch {
+    ui.error("Could not unlock the selected wallet. Check the password and try again.");
+    return null;
+  }
 }
 
 function shouldSkipUpdateCheck(argv: string[]): boolean {
@@ -182,21 +258,31 @@ function shouldSkipUpdateCheck(argv: string[]): boolean {
     || argv[0] === "help";
 }
 
-async function setupWizard(): Promise<void> {
-  console.log("");
-  ui.banner(["APoW Agent Setup"]);
-  console.log("");
+interface SetupWizardOptions {
+  easyMode?: boolean;
+  showBrandIntro?: boolean;
+}
+
+async function setupWizard(options: SetupWizardOptions = {}): Promise<void> {
+  if (options.showBrandIntro !== false) {
+    await showBrandIntro("setup");
+  }
 
   // Mode selection
-  console.log(`  ${ui.bold("Choose an operating mode")}`);
-  console.log("");
-  console.log(`  ${ui.cyan("1.")} Easy Mode ${ui.dim("(recommended)")}`);
-  console.log(`     ${ui.dim("No config. Wallet + x402 RPC + x402 LLM + x402 GPU grind.")}`);
-  console.log(`  ${ui.cyan("2.")} Advanced Mode`);
-  console.log(`     ${ui.dim("Choose which parts your agent manages and which credentials you supply.")}`);
-  console.log("");
-  const modeInput = await ui.prompt("Choice", "1");
-  const easyMode = modeInput !== "2";
+  let easyMode = true;
+  if (options.easyMode) {
+    ui.ok("Easy Mode selected.");
+  } else {
+    console.log(`  ${ui.bold("Choose an operating mode")}`);
+    console.log("");
+    console.log(`  ${ui.cyan("1.")} Easy Mode ${ui.dim("(recommended)")}`);
+    console.log(`     ${ui.dim("No config. Wallet + QuickNode x402 RPC + ClawRouter x402 LLM + RunPod x402 GPU.")}`);
+    console.log(`  ${ui.cyan("2.")} Advanced Mode`);
+    console.log(`     ${ui.dim("Choose which parts your agent manages and which credentials you supply.")}`);
+    console.log("");
+    const modeInput = await ui.prompt("Choice", "1");
+    easyMode = modeInput !== "2";
+  }
   console.log("");
 
   const totalSteps = easyMode ? 2 : 4;
@@ -204,13 +290,19 @@ async function setupWizard(): Promise<void> {
 
   // Step 1: Wallet
   console.log(`  ${ui.bold(`Step 1/${totalSteps}: Wallet`)}`);
-  console.log(`  ${ui.dim("Your agent can manage a wallet for you, or you can supply your own.")}`);
-  console.log("");
-  console.log(`  ${ui.cyan("1.")} Agent-managed encrypted wallet ${ui.dim("(generate one now)")}`);
-  console.log(`  ${ui.cyan("2.")} Existing encrypted keystore`);
-  console.log(`  ${ui.cyan("3.")} Existing private key ${ui.dim("(encrypt before saving)")}`);
-  console.log("");
-  const walletMode = await ui.prompt("Wallet choice", "1");
+  let walletMode = "1";
+  if (options.easyMode) {
+    console.log(`  ${ui.dim("Generating one dedicated encrypted APoW wallet.")}`);
+    console.log("");
+  } else {
+    console.log(`  ${ui.dim("Your agent can manage a wallet for you, or you can supply your own.")}`);
+    console.log("");
+    console.log(`  ${ui.cyan("1.")} Agent-managed encrypted wallet ${ui.dim("(generate one now)")}`);
+    console.log(`  ${ui.cyan("2.")} Existing encrypted keystore`);
+    console.log(`  ${ui.cyan("3.")} Existing private key ${ui.dim("(encrypt before saving)")}`);
+    console.log("");
+    walletMode = await ui.prompt("Wallet choice", "1");
+  }
 
   let addr: string;
   let keystorePath: string | undefined;
@@ -265,6 +357,7 @@ async function setupWizard(): Promise<void> {
     const walletAccount = privateKeyToAccount(privateKey);
     addr = walletAccount.address;
     keystorePath = await saveKeystoreWithPassword(addr as `0x${string}`, privateKey, password);
+    registerGeneratedWallet(addr as `0x${string}`, keystorePath);
 
     console.log("");
     console.log(`  ${ui.bold("NEW WALLET GENERATED")}`);
@@ -272,8 +365,7 @@ async function setupWizard(): Promise<void> {
     console.log(`  Address:     ${addr}`);
     console.log(`  Keystore:    ${keystorePath}`);
     console.log("");
-    console.log(`  ${ui.dim("Import into Phantom, MetaMask, or any EVM wallet")}`);
-    console.log(`  ${ui.dim("later with: apow wallet export --show-private-key")}`);
+    console.log(`  ${ui.dim("Back up the encrypted keystore and its password separately.")}`);
     console.log("");
     console.log(`  ${ui.dim("Fund this address with ≥0.005 ETH on Base to start.")}`);
     console.log("");
@@ -287,26 +379,27 @@ async function setupWizard(): Promise<void> {
   console.log("");
 
   if (easyMode) {
-    // Easy Mode: fully autonomous x402 stack
+    // Easy Mode: automated wallet-paid x402 stack
     console.log(`  ${ui.bold(`Step 2/${totalSteps}: Configuration`)}`);
     values.USE_X402 = "true";
     values.USE_X402_GRIND = "true";
     values.LLM_PROVIDER = "clawrouter";
-    values.LLM_MODEL = "blockrun/eco";
     values.ALLOW_LOCAL_FALLBACK_WITH_X402 = "false";
-    ui.ok("RPC: QuickNode x402 (wallet-paid, no API key)");
-    ui.ok("LLM: ClawRouter x402 (wallet-paid, no API key)");
-    ui.ok("Grinder: x402 GPU (remote, wallet-paid, no local CPU fallback)");
+    ui.ok("RPC: Auto (Zero Config via QuickNode x402; wallet-paid in USDC)");
+    ui.ok("LLM: Auto (Zero Config via ClawRouter x402; wallet-paid in USDC)");
+    ui.ok("Grinder: Auto (Zero Config via RunPod x402; wallet-paid in USDC)");
     console.log(`  ${ui.dim("Easy mode is agent-first: no RPC key, no LLM key, no GPU rental setup.")}`);
-    console.log(`  ${ui.dim("Fund the wallet with ETH + USDC on Base, then run: apow start")}`);
+    console.log(`  ${ui.dim(`Fund the wallet with ETH + USDC on Base, then run: apow start${options.easyMode ? " --easy" : ""}`)}`);
   } else {
     // Advanced: user picks which services remain autonomous
     // Step 2: RPC
     console.log(`  ${ui.bold(`Step 2/${totalSteps}: RPC`)}`);
-    console.log(`  ${ui.dim("Choose whether your agent pays for RPC via x402 or you provide your own endpoint.")}`);
+    console.log(`  ${ui.dim("Choose automatic wallet-paid RPC or provide your own Base endpoint.")}`);
     console.log("");
-    console.log(`  ${ui.cyan("1.")} Agent-managed x402 RPC ${ui.dim("(recommended)")}`);
+    console.log(`  ${ui.cyan("1.")} Auto ${ui.dim("(recommended — Zero Config via QuickNode x402)")}`);
+    console.log(`     ${ui.dim("No account or API key to connect.")}`);
     console.log(`  ${ui.cyan("2.")} Custom RPC URL`);
+    console.log(`     ${ui.dim("Get a free Base RPC URL from Alchemy: https://www.alchemy.com/")}`);
     console.log("");
     const rpcMode = await ui.prompt("RPC choice", "1");
 
@@ -316,13 +409,13 @@ async function setupWizard(): Promise<void> {
         values.RPC_URL = rpcUrl;
         ui.ok(`RPC: Custom (${rpcUrl.slice(0, 40)}${rpcUrl.length > 40 ? "..." : ""})`);
       } else {
-        ui.warn("No URL provided — using QuickNode x402");
+        ui.warn("No URL provided — using Auto RPC via x402");
         values.USE_X402 = "true";
-        ui.ok("RPC: QuickNode x402");
+        ui.ok("RPC: Auto (Zero Config via QuickNode x402)");
       }
     } else {
       values.USE_X402 = "true";
-      ui.ok("RPC: QuickNode x402 (wallet-paid)");
+      ui.ok("RPC: Auto (Zero Config via QuickNode x402; wallet-paid in USDC)");
     }
     console.log("");
 
@@ -330,26 +423,36 @@ async function setupWizard(): Promise<void> {
     console.log(`  ${ui.bold(`Step 3/${totalSteps}: LLM (minting only)`)}`);
     console.log(`  ${ui.dim("An LLM solves the SMHL challenge when minting your Mining Rig.")}`);
     console.log(`  ${ui.dim("Mining uses optimized solving — no LLM needed after minting.")}`);
-    console.log(`  ${ui.dim("  clawrouter (recommended) — wallet-paid via x402")}`);
-    console.log(`  ${ui.dim("  openai / anthropic / gemini / deepseek / qwen — API key")}`);
-    console.log(`  ${ui.dim("  ollama / claude-code / codex — local")}`);
-    const providerInput = await ui.prompt("Provider", "clawrouter");
-    const provider = (["clawrouter", "openai", "anthropic", "gemini", "ollama", "deepseek", "qwen", "claude-code", "codex"].includes(providerInput) ? providerInput : "clawrouter") as LlmProvider;
-    values.LLM_PROVIDER = provider;
+    console.log("");
+    console.log(`  ${ui.cyan("1.")} Auto ${ui.dim("(recommended — Zero Config via ClawRouter x402)")}`);
+    console.log(`     ${ui.dim("No account or API key to connect.")}`);
+    console.log(`     ${ui.dim("Typical ClawRouter eco cost: $0–$0.0004 USDC per call; varies by usage.")}`);
+    console.log(`  ${ui.cyan("2.")} API key ${ui.dim("(OpenAI, Anthropic, or Gemini; more providers available)")}`);
+    console.log(`  ${ui.cyan("3.")} Local / subscription CLI ${ui.dim("(Ollama, Claude Code, or Codex)")}`);
+    console.log("");
 
-    if (provider === "clawrouter") {
-      ui.ok("ClawRouter x402 — no API key needed, pays with USDC from your wallet");
+    const llmMode = resolveLlmSetupMode(await ui.prompt("LLM choice", "1"));
+    let provider: LlmProvider;
+
+    if (llmMode === "x402") {
+      provider = "clawrouter";
+      values.LLM_PROVIDER = provider;
+      ui.ok("Auto LLM enabled — Zero Config via ClawRouter x402; wallet-paid in USDC");
       if (!values.USE_X402 && !values.RPC_URL) {
         values.USE_X402 = "true";
         ui.ok("Auto-enabled x402 RPC (same wallet, same USDC balance)");
       }
-    } else if (provider === "ollama") {
-      const ollamaUrl = await ui.prompt("Ollama URL", "http://127.0.0.1:11434");
-      values.OLLAMA_URL = ollamaUrl;
-      ui.ok(`Ollama at ${ollamaUrl}`);
-    } else if (provider === "claude-code" || provider === "codex") {
-      ui.ok(`Using local ${provider} CLI — make sure you're already authenticated`);
-    } else {
+    } else if (llmMode === "api-key") {
+      console.log("");
+      console.log(`  ${ui.cyan("1.")} OpenAI`);
+      console.log(`  ${ui.cyan("2.")} Anthropic`);
+      console.log(`  ${ui.cyan("3.")} Gemini`);
+      console.log(`  ${ui.cyan("4.")} DeepSeek`);
+      console.log(`  ${ui.cyan("5.")} Qwen`);
+      console.log("");
+      provider = resolveApiProvider(await ui.prompt("API provider", "1"));
+      values.LLM_PROVIDER = provider;
+
       const apiKey = await ui.promptSecret("API key");
       if (apiKey) {
         values.LLM_API_KEY = apiKey;
@@ -358,14 +461,36 @@ async function setupWizard(): Promise<void> {
         ui.fail("No API key provided");
         ui.hint("Set LLM_API_KEY in .env later");
       }
-    }
 
-    const defaultModel = resolveDefaultModel(provider);
-    const model = await ui.prompt("Model", defaultModel);
-    values.LLM_MODEL = model;
+      const model = await ui.prompt("Model", resolveDefaultModel(provider));
+      values.LLM_MODEL = model;
+      if (isExpensiveModel(model)) {
+        ui.warn(`${model} is expensive. Consider a smaller model for lower cost.`);
+      }
+    } else {
+      console.log("");
+      console.log(`  ${ui.cyan("1.")} Ollama ${ui.dim("(model runs on this machine)")}`);
+      console.log(`  ${ui.cyan("2.")} Claude Code ${ui.dim("(hosted via your Claude subscription)")}`);
+      console.log(`  ${ui.cyan("3.")} Codex ${ui.dim("(hosted via your ChatGPT subscription)")}`);
+      console.log("");
+      provider = resolveLocalProvider(await ui.prompt("Local / subscription provider", "1"));
+      values.LLM_PROVIDER = provider;
 
-    if (isExpensiveModel(model)) {
-      ui.warn(`${model} is expensive. Consider gpt-4o-mini for lower cost.`);
+      const model = resolveDefaultModel(provider);
+      values.LLM_MODEL = model;
+      if (provider === "ollama") {
+        const ollamaUrl = await ui.prompt("Ollama URL", "http://127.0.0.1:11434");
+        values.OLLAMA_URL = ollamaUrl;
+        values.LLM_MODEL = await ui.prompt("Ollama model", model);
+        ui.ok(`Ollama at ${ollamaUrl} (local inference)`);
+        ui.hint(`Run \`ollama pull ${values.LLM_MODEL}\` before minting.`);
+      } else if (provider === "claude-code") {
+        ui.ok(`Claude Code subscription — ${model} auto-selected`);
+        ui.hint("Requires an installed, signed-in Claude Code CLI. APoW disables its tools for SMHL.");
+      } else {
+        ui.ok(`Codex subscription — ${model} auto-selected`);
+        ui.hint("Requires an installed, signed-in Codex CLI. APoW uses a read-only isolated run for SMHL.");
+      }
     }
 
     console.log("");
@@ -374,25 +499,20 @@ async function setupWizard(): Promise<void> {
     console.log(`  ${ui.bold(`Step 4/${totalSteps}: GPU Grinding`)}`);
     console.log(`  ${ui.dim("Choose how the miner should find nonces at current network difficulty.")}`);
     console.log("");
-    console.log(`  ${ui.cyan("1.")} Agent-managed x402 GPU ${ui.dim("(recommended, no setup)")}`);
-    console.log(`  ${ui.cyan("2.")} Local / custom grinders only`);
-    console.log(`  ${ui.cyan("3.")} Hybrid ${ui.dim("(x402 GPU + local JS fallback)")}`);
+    console.log(`  ${ui.cyan("1.")} Auto ${ui.dim("(recommended — Zero Config via RunPod x402)")}`);
+    console.log(`     ${ui.dim("No account, API key, or GPU rental setup to connect.")}`);
+    console.log(`  ${ui.cyan("2.")} Local CPU/GPU`);
     console.log("");
     const grindMode = await ui.prompt("Grinding choice", "1");
 
     if (grindMode === "2") {
       values.USE_X402_GRIND = "false";
       values.ALLOW_LOCAL_FALLBACK_WITH_X402 = "false";
-      ui.ok("Grinding: local/custom only");
-      ui.hint("Configure GPU_GRINDER_PATH, CUDA_GRINDER_PATH, or VAST_* yourself if needed.");
-    } else if (grindMode === "3") {
-      values.USE_X402_GRIND = "true";
-      values.ALLOW_LOCAL_FALLBACK_WITH_X402 = "true";
-      ui.ok("Grinding: x402 GPU with local JS fallback");
+      ui.ok("Grinding: Local CPU/GPU");
     } else {
       values.USE_X402_GRIND = "true";
       values.ALLOW_LOCAL_FALLBACK_WITH_X402 = "false";
-      ui.ok("Grinding: x402 GPU only");
+      ui.ok("Grinding: Auto (Zero Config via RunPod x402)");
     }
   }
 
@@ -404,9 +524,10 @@ async function setupWizard(): Promise<void> {
 
   // Check for existing .env
   const envPath = join(process.cwd(), ".env");
-  if (existsSync(envPath)) {
-    const overwrite = await ui.confirm("Overwrite existing .env?");
-    if (!overwrite) {
+  if (existsSync(envPath) && !options.easyMode) {
+    ui.hint("This updates APoW setup values, including the active wallet. Unrelated environment variables are kept.");
+    const update = await ui.confirm("Update existing .env with these settings?");
+    if (!update) {
       console.log("  Setup cancelled.");
       return;
     }
@@ -417,38 +538,50 @@ async function setupWizard(): Promise<void> {
   reloadConfig();
   reinitClients();
   ui.ok("Config saved to .env");
-  ui.ok(`Policy saved to ${policyFile}`);
+  ui.ok(`Policy ready at ${policyFile}`);
   ensureGitignoreSafetyEntries();
 
-  console.log("");
-  console.log(`  Next: ${ui.cyan("apow start")}`);
-  console.log(`        ${ui.dim("Guided happy path: setup -> fund -> mint -> mine")}`);
-  console.log("");
+  if (!options.easyMode) {
+    console.log("");
+    console.log(`  Next: ${ui.cyan("apow start")}`);
+    console.log(`        ${ui.dim("Guided happy path: setup -> fund -> mint -> mine")}`);
+    console.log("");
+  }
 }
 
-function showHeadlessFundingHandoff(address: `0x${string}`, needsEth: boolean, needsUsdc: boolean): void {
-  ui.warn("Headless session detected — pausing before funding.");
+function showFundingHandoff(
+  address: `0x${string}`,
+  needsEth: boolean,
+  needsUsdc: boolean,
+  easyMode: boolean,
+): void {
+  ui.warn("Pausing for Base funding.");
   ui.hint(`Send funds to ${address} on Base.`);
   if (needsEth) {
     ui.hint(`Need at least ${MIN_ETH} ETH for gas and minting.`);
   }
   if (needsUsdc) {
-    ui.hint(`Need at least ${MIN_USDC} USDC for QuickNode + ClawRouter x402.`);
+    ui.hint(`Need at least ${MIN_USDC} USDC for x402 RPC + LLM services.`);
   }
-  ui.hint("Funding routes:");
-  ui.hint("Direct on Base: send ETH and/or USDC to this wallet");
-  ui.hint("Bridge from Solana: apow fund --chain solana --token sol");
-  ui.hint("Bridge from Ethereum: apow fund --chain ethereum");
-  ui.hint("After funds arrive, rerun `apow start`.");
+  ui.hint(`After funds arrive, rerun \`apow start${easyMode ? " --easy" : ""}\`.`);
 }
 
-async function runStartFlow(): Promise<void> {
-  await unlockConfiguredKeystoreIfNeeded();
+interface StartFlowOptions {
+  easyMode?: boolean;
+}
+
+async function runStartFlow(options: StartFlowOptions = {}): Promise<void> {
+  await showBrandIntro("start");
+
+  const unlockedConfiguredWallet = await unlockConfiguredKeystoreIfNeeded();
+  if (config.keystorePath && !unlockedConfiguredWallet && !account) {
+    return;
+  }
 
   if (!config.privateKey || !account) {
     console.log("");
     ui.warn("No wallet configured — launching setup.");
-    await setupWizard();
+    await setupWizard({ easyMode: options.easyMode === true, showBrandIntro: false });
     reloadConfig();
     reinitClients();
   }
@@ -458,13 +591,18 @@ async function runStartFlow(): Promise<void> {
     return;
   }
 
+  if (options.easyMode) {
+    const policyError = validateEasyModePolicyCaps(loadPolicy());
+    if (policyError) {
+      ui.error(policyError);
+      ui.hint("Restore the default enforce-mode Easy Mode caps, then retry.");
+      return;
+    }
+  }
+
   const bootstrapClient = config.useX402 && config.chainName === "base" && config.rpcUrl
     ? createPublicClient({ chain: config.chain, transport: http(config.rpcUrl) })
     : publicClient;
-
-  console.log("");
-  ui.banner(["APoW Start"]);
-  console.log("");
 
   let miners = [] as Awaited<ReturnType<typeof detectMinersWithClient>>;
   try {
@@ -477,7 +615,7 @@ async function runStartFlow(): Promise<void> {
     console.log(`  ${ui.green("Wallet ready.")} Found ${miners.length} rig${miners.length === 1 ? "" : "s"} — starting miner #${best.tokenId}.`);
     console.log("");
     await runPreflight("mining");
-    await startMining(best.tokenId);
+    await startMining(best.tokenId, { easyMode: options.easyMode === true });
     return;
   }
 
@@ -508,38 +646,27 @@ async function runStartFlow(): Promise<void> {
 
   if (needsEth || needsUsdc) {
     console.log(`  ${ui.yellow("Funding needed before minting.")}`);
-    ui.table([
+    const fundingRows: [string, string][] = [
       ["Wallet", `${account.address.slice(0, 6)}...${account.address.slice(-4)}`],
       ["ETH", balanceChecksAvailable ? `${ethBalance.toFixed(6)} ETH${needsEth ? ` (need ≥${MIN_ETH})` : ""}` : "unknown (RPC check failed)"],
-      ["USDC", config.useX402 ? (balanceChecksAvailable ? `${usdcBalance.toFixed(2)} USDC${needsUsdc ? ` (need ≥${MIN_USDC})` : ""}` : "unknown (RPC check failed)") : "not required"],
-    ]);
+    ];
+    if (config.useX402) {
+      fundingRows.push([
+        "USDC",
+        balanceChecksAvailable ? `${usdcBalance.toFixed(2)} USDC${needsUsdc ? ` (need ≥${MIN_USDC})` : ""}` : "unknown (RPC check failed)",
+      ]);
+    }
+    ui.table(fundingRows);
     console.log("");
-
-    if (!ui.isInteractiveSession()) {
-      showHeadlessFundingHandoff(account.address, needsEth, needsUsdc);
-      return;
-    }
-
-    const runFunding = await ui.confirm("Run funding flow now?");
-    if (!runFunding) {
-      ui.hint("Fund the wallet, then rerun `apow start`.");
-      return;
-    }
-
-    setSignerContext("fund");
-    await runFundFlow({});
-
-    const refreshedEth = Number(formatEther(await getEthBalance()));
-    const refreshedUsdc = config.useX402 ? Number(formatUnits(await getUsdcBalance(account.address), 6)) : usdcBalance;
-    if (refreshedEth < MIN_ETH || (config.useX402 && refreshedUsdc < MIN_USDC)) {
-      ui.warn("Funding is still incomplete.");
-      ui.hint("Bridge or deposit may still be pending. Rerun `apow start` once balances update.");
-      return;
-    }
+    showFundingHandoff(account.address, needsEth, needsUsdc, options.easyMode === true);
+    return;
   }
 
   setSignerContext("mint");
-  await runMintFlow({ startMiningAfterMint: true });
+  await runMintFlow({
+    easyMode: options.easyMode === true,
+    startMiningAfterMint: true,
+  });
 }
 
 async function main(): Promise<void> {
@@ -580,9 +707,10 @@ async function main(): Promise<void> {
 
   program
     .command("start")
-    .description("Agent-first happy path: setup -> fund -> mint -> mine")
-    .action(async () => {
-      await runStartFlow();
+    .description("Agent-first path: setup -> Base funding handoff -> mint -> mine")
+    .option("--easy", "Use the existing Easy Mode without the mode-selection prompt")
+    .action(async (opts: { easy?: boolean }) => {
+      await runStartFlow({ easyMode: opts.easy === true });
     });
 
   program
@@ -759,8 +887,7 @@ async function main(): Promise<void> {
   walletCmd
     .command("new")
     .description("Generate a new encrypted Base wallet")
-    .option("--show-private-key", "Print the private key after generation (unsafe except for immediate import)")
-    .action(async (opts: { showPrivateKey?: boolean }) => {
+    .action(async () => {
       const password = await getKeystorePassword(true);
       if (!password) {
         return;
@@ -772,6 +899,7 @@ async function main(): Promise<void> {
       const artifacts = await saveWalletArtifacts(acct.address, key, {
         requireKeystore: true,
       });
+      registerGeneratedWallet(acct.address, artifacts.keystorePath!);
 
       console.log("");
       console.log(`  ${ui.bold("NEW WALLET GENERATED")}`);
@@ -781,18 +909,72 @@ async function main(): Promise<void> {
         console.log(`  Keystore:    ${artifacts.keystorePath}`);
       }
       console.log("");
+      console.log(`  ${ui.dim("Private key remains encrypted and is never printed.")}`);
+      console.log(`  ${ui.dim("Back up the keystore and its password separately.")}`);
+      console.log(`  ${ui.dim(`Activate it in this project with: apow wallet use ${acct.address}`)}`);
+      console.log("");
+    });
 
-      if (opts.showPrivateKey) {
-        console.log(`  Private Key: ${key}`);
-        console.log("");
-        console.log(`  ${ui.yellow("WARNING: anyone with this key controls your funds.")}`);
-      } else {
-        console.log(`  ${ui.dim("Private key hidden. Export later with: apow wallet export --show-private-key")}`);
+  walletCmd
+    .command("list")
+    .description("List wallets generated locally by this APoW CLI")
+    .action(() => {
+      const wallets = loadGeneratedWallets();
+      if (wallets.length === 0) {
+        ui.error("No locally generated APoW wallets found.");
+        ui.hint("Create one with `apow wallet new` or the setup wizard.");
+        return;
       }
-      console.log("");
-      console.log(`  ${ui.dim("Import into Phantom, MetaMask, or any EVM wallet")}`);
-      console.log(`  ${ui.dim("to view your AGENT tokens and Mining Rig NFT.")}`);
-      console.log("");
+      printGeneratedWallets(wallets);
+    });
+
+  walletCmd
+    .command("use")
+    .alias("select")
+    .description("Select a locally generated APoW wallet for this project")
+    .argument("[wallet]", "Wallet address or number from `apow wallet list`")
+    .action(async (walletArg?: string) => {
+      const wallets = loadGeneratedWallets();
+      if (wallets.length === 0) {
+        ui.error("No locally generated APoW wallets found.");
+        ui.hint("Create one with `apow wallet new` or the setup wizard.");
+        return;
+      }
+
+      let selection = walletArg?.trim() ?? "";
+      if (!selection) {
+        if (!ui.isInteractiveSession()) {
+          ui.error("Specify a wallet address or number from `apow wallet list`.");
+          return;
+        }
+        printGeneratedWallets(wallets);
+        const activeIndex = wallets.findIndex(isActiveGeneratedWallet);
+        selection = await ui.prompt(
+          "Wallet number or address",
+          String(activeIndex >= 0 ? activeIndex + 1 : 1),
+        );
+      }
+
+      const selected = resolveGeneratedWalletSelection(wallets, selection);
+      if (!selected) {
+        ui.error("Wallet not found. Use an address or list number from `apow wallet list`.");
+        return;
+      }
+      if (isActiveGeneratedWallet(selected)) {
+        ui.ok(`Wallet already active: ${selected.address}`);
+        return;
+      }
+
+      const password = await unlockGeneratedWallet(selected);
+      if (!password) {
+        return;
+      }
+
+      setSessionPassword(password);
+      await writeEnvFile({ PRIVATE_KEY: "", KEYSTORE_PATH: selected.keystorePath });
+      reinitClients();
+      ui.ok(`Active wallet: ${selected.address}`);
+      ui.hint(`Project config updated: ${join(process.cwd(), ".env")}`);
     });
 
   walletCmd
@@ -801,7 +983,7 @@ async function main(): Promise<void> {
     .action(async () => {
       await unlockConfiguredKeystoreIfNeeded();
       if (!account) {
-        ui.error("No wallet configured. Run `apow setup` and choose Easy Mode, or set KEYSTORE_PATH or PRIVATE_KEY in .env.");
+        ui.error("No wallet configured. Run `apow setup` and choose Easy Mode, or configure KEYSTORE_PATH.");
         return;
       }
       console.log("");
@@ -815,62 +997,25 @@ async function main(): Promise<void> {
     });
 
   walletCmd
-    .command("export")
-    .description("Export wallet private key or create backup artifacts")
-    .option("--show-private-key", "Display the decrypted private key")
-    .option("--plaintext", "Save a plaintext wallet-<address>.txt import helper")
-    .option("--i-understand-plaintext-risk", "Required with --plaintext")
-    .option("--keystore", "Write or refresh the encrypted keystore backup")
-    .action(async (opts: { showPrivateKey?: boolean; plaintext?: boolean; iUnderstandPlaintextRisk?: boolean; keystore?: boolean }) => {
+    .command("backup")
+    .description("Show the encrypted wallet backup location (never displays private keys)")
+    .action(async () => {
       await unlockConfiguredKeystoreIfNeeded();
-      if (!account || !config.privateKey) {
-        ui.error("No wallet configured. Run `apow setup` and choose Easy Mode, or set KEYSTORE_PATH or PRIVATE_KEY in .env.");
+      if (!account) {
+        ui.error("No wallet configured. Run `apow setup` and choose Easy Mode, or configure KEYSTORE_PATH.");
         return;
       }
-
-      if (opts.plaintext && !opts.iUnderstandPlaintextRisk) {
-        ui.error("Refusing plaintext export without --i-understand-plaintext-risk.");
-        return;
-      }
-      if (opts.plaintext && ui.isInteractiveSession()) {
-        const typed = await ui.prompt("Type PLAINTEXT to create an unencrypted wallet file");
-        if (typed !== "PLAINTEXT") {
-          console.log("  Cancelled.");
-          return;
-        }
-      }
-
-      const shouldPrintKey = opts.showPrivateKey === true
-        || (await confirmPrivateKeyDisplay());
-      if (!shouldPrintKey && !opts.plaintext && !opts.keystore) {
-        console.log("");
-        console.log(`  Address: ${account.address}`);
-        if (config.keystorePath) {
-          console.log(`  Keystore: ${config.keystorePath}`);
-        }
-        console.log(`  ${ui.dim("Use --show-private-key only when you need to import the wallet elsewhere.")}`);
-        console.log("");
+      if (config.walletSource !== "keystore" || !config.keystorePath) {
+        ui.error("This wallet is using the legacy environment-key path.");
+        ui.hint("Run `apow wallet migrate` to create an encrypted keystore backup.");
         return;
       }
 
       console.log("");
-      console.log(`  Address:     ${account.address}`);
-      if (shouldPrintKey) {
-        console.log(`  Private Key: ${config.privateKey}`);
-        console.log(`  ${ui.yellow("WARNING: anyone with this key controls your funds.")}`);
-      }
-      console.log("");
-
-      const artifacts = await saveWalletArtifacts(account.address, config.privateKey, {
-        createPlaintextImportFile: opts.plaintext === true,
-        requireKeystore: opts.keystore === true,
-      });
-      if (artifacts.plaintextPath) {
-        console.log(`  ${ui.dim(`Saved import helper: ${artifacts.plaintextPath}`)}`);
-      }
-      if (artifacts.keystorePath) {
-        console.log(`  ${ui.dim(`Saved encrypted keystore: ${artifacts.keystorePath}`)}`);
-      }
+      console.log(`  Address:  ${account.address}`);
+      console.log(`  Keystore: ${config.keystorePath}`);
+      console.log(`  ${ui.dim("Back up this encrypted file and its password separately.")}`);
+      console.log(`  ${ui.dim("APoW never prints or writes a plaintext private-key export.")}`);
       console.log("");
     });
 
@@ -1037,27 +1182,30 @@ async function main(): Promise<void> {
     .description("Launch the dashboard web UI")
     .action(async () => {
       setSignerContext("dashboard");
-      const walletsPath = getWalletsPath();
-
-      // Seed wallets.json if it doesn't exist
-      if (!existsSync(walletsPath)) {
-        const walletsDir = join(process.env.HOME ?? "", ".apow");
-        if (!existsSync(walletsDir)) mkdirSync(walletsDir, { recursive: true });
-        const initial = account ? [account.address] : [];
-        writeFileSync(walletsPath, JSON.stringify(initial, null, 2), "utf8");
-        if (account) {
-          ui.ok(`Seeded ${walletsPath} with ${account.address.slice(0, 6)}...${account.address.slice(-4)}`);
-        } else {
-          ui.ok(`Created ${walletsPath} (empty — add wallets with: apow dashboard add <address>)`);
+      if (config.useX402) {
+        await unlockConfiguredKeystoreIfNeeded();
+        const policy = loadPolicy();
+        if (policy.mode !== "enforce") {
+          ui.error("Paid dashboard reads require the wallet signing policy in enforce mode.");
+          ui.hint("Run `apow policy set mode enforce`, then retry.");
+          return;
         }
       }
-
-      // Auto-detect wallets from CWD
-      const { addresses, newCount } = detectWallets(process.cwd());
-      if (newCount > 0) {
-        ui.ok(`Detected ${addresses.length} wallets (${newCount} new)`);
-      } else if (addresses.length > 0) {
-        console.log(`  ${ui.dim(`${addresses.length} wallets loaded`)}`);
+      const generatedWallets = loadGeneratedWalletAddresses();
+      const configuredAccount = account;
+      const signerIsGenerated = !!configuredAccount && generatedWallets.some(
+        (address) => address.toLowerCase() === configuredAccount.address.toLowerCase(),
+      );
+      if (config.useX402 && !signerIsGenerated) {
+        ui.error("Dashboard x402 requires a configured wallet generated locally by this APoW CLI.");
+        ui.hint("Run `apow wallet new`, configure its KEYSTORE_PATH, then retry.");
+        return;
+      }
+      if (generatedWallets.length === 0) {
+        ui.warn("No locally generated APoW wallets are registered. The dashboard will be empty.");
+        ui.hint("Run `apow wallet new` to create and register one.");
+      } else {
+        console.log(`  ${ui.dim(`${generatedWallets.length} locally generated wallets loaded`)}`);
       }
 
       const { startDashboardServer } = await import("./dashboard");
@@ -1069,11 +1217,9 @@ async function main(): Promise<void> {
 
       const server = startDashboardServer({
         port: 3847,
-        walletsPath,
         rpcUrl: config.rpcUrl,
         useX402: config.useX402,
-        signer: account ?? undefined,
-        legacyPrivateKey: config.privateKey as `0x${string}` | undefined,
+        signer: signerIsGenerated ? configuredAccount ?? undefined : undefined,
         miningAgentAddress: config.miningAgentAddress as `0x${string}`,
         agentCoinAddress: config.agentCoinAddress as `0x${string}`,
       });
@@ -1094,73 +1240,16 @@ async function main(): Promise<void> {
     });
 
   dashboardCmd
-    .command("add <address>")
-    .description("Add a wallet address to monitor")
-    .action((address: string) => {
-      if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
-        ui.error("Invalid address. Must be 0x + 40 hex characters.");
-        return;
-      }
-      const walletsPath = getWalletsPath();
-      const wallets = loadWallets(walletsPath);
-      const lower = address.toLowerCase();
-      if (wallets.some((w) => w.toLowerCase() === lower)) {
-        ui.warn("Address already monitored.");
-        return;
-      }
-      wallets.push(address);
-      saveWallets(walletsPath, wallets);
-      ui.ok(`Added ${address.slice(0, 6)}...${address.slice(-4)} (${wallets.length} wallets total)`);
-    });
-
-  dashboardCmd
-    .command("remove <address>")
-    .description("Remove a wallet address from monitoring")
-    .action((address: string) => {
-      const walletsPath = getWalletsPath();
-      const wallets = loadWallets(walletsPath);
-      const lower = address.toLowerCase();
-      const filtered = wallets.filter((w) => w.toLowerCase() !== lower);
-      if (filtered.length === wallets.length) {
-        ui.warn("Address not found in wallet list.");
-        return;
-      }
-      saveWallets(walletsPath, filtered);
-      ui.ok(`Removed ${address.slice(0, 6)}...${address.slice(-4)} (${filtered.length} wallets remaining)`);
-    });
-
-  dashboardCmd
-    .command("scan [dir]")
-    .description("Auto-detect wallets from wallet-0x*.txt or wallet-0x*.json files in a directory")
-    .action((dir?: string) => {
-      const scanDir = dir ?? process.cwd();
-      const { addresses, newCount } = detectWallets(scanDir);
-      console.log("");
-      if (addresses.length === 0) {
-        console.log(`  No wallets found in ${scanDir}`);
-        console.log(`  ${ui.dim("Expected files named wallet-0x<address>.txt or wallet-0x<address>.json")}`);
-      } else {
-        console.log(`  ${ui.bold("Detected Wallets")} (${newCount} new, ${addresses.length} total)`);
-        console.log("");
-        for (const addr of addresses) {
-          console.log(`  ${addr}`);
-        }
-      }
-      console.log("");
-    });
-
-  dashboardCmd
     .command("wallets")
-    .description("List monitored wallet addresses")
+    .description("List locally generated APoW wallet addresses")
     .action(() => {
-      const walletsPath = getWalletsPath();
-      const wallets = loadWallets(walletsPath);
+      const wallets = loadGeneratedWalletAddresses();
       if (wallets.length === 0) {
-        console.log("  No wallets configured. Run: apow dashboard add <address>");
+        console.log("  No locally generated APoW wallets. Run: apow wallet new");
         return;
       }
       console.log("");
-      console.log(`  ${ui.bold("Monitored Wallets")} (${wallets.length})`);
+      console.log(`  ${ui.bold("Locally Generated Wallets")} (${wallets.length})`);
       console.log("");
       for (const w of wallets) {
         console.log(`  ${w}`);
@@ -1169,70 +1258,6 @@ async function main(): Promise<void> {
     });
 
   await program.parseAsync(process.argv);
-}
-
-function getWalletsPath(): string {
-  return join(process.env.HOME ?? "", ".apow", "wallets.json");
-}
-
-function loadWallets(path: string): string[] {
-  try {
-    const raw = readFileSync(path, "utf8");
-    const data = JSON.parse(raw);
-    return Array.isArray(data) ? data.filter((a: unknown) => typeof a === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveWallets(path: string, wallets: string[]): void {
-  const dir = join(process.env.HOME ?? "", ".apow");
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(path, JSON.stringify(wallets, null, 2), "utf8");
-}
-
-function detectWallets(scanDir: string): { addresses: string[]; newCount: number } {
-  const walletsPath = getWalletsPath();
-  const existing = loadWallets(walletsPath);
-  const seen = new Set(existing.map((a) => a.toLowerCase()));
-  const detected: string[] = [];
-
-  // Scan scanDir for wallet-0x*.txt / .json files
-  try {
-    const entries = readdirSync(scanDir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isFile()) {
-        const address = detectWalletAddressFromFilename(entry.name);
-        if (address && !seen.has(address.toLowerCase())) {
-          detected.push(address);
-          seen.add(address.toLowerCase());
-        }
-      }
-      // Scan rig*/wallet-0x* subdirectories
-      if (entry.isDirectory() && entry.name.startsWith("rig")) {
-        try {
-          const rigFiles = readdirSync(join(scanDir, entry.name));
-          for (const file of rigFiles) {
-            const address = detectWalletAddressFromFilename(file);
-            if (address && !seen.has(address.toLowerCase())) {
-              detected.push(address);
-              seen.add(address.toLowerCase());
-            }
-          }
-        } catch {
-          // rig dir not readable — skip
-        }
-      }
-    }
-  } catch {
-    // scanDir not readable
-  }
-
-  const merged = [...existing, ...detected];
-  if (detected.length > 0) {
-    saveWallets(walletsPath, merged);
-  }
-  return { addresses: merged, newCount: detected.length };
 }
 
 main().catch((error) => {

@@ -10,7 +10,7 @@ const DATA_SUFFIX = Attribution.toDataSuffix({ codes: ["bc_6wfeb1kd"] });
 function getTransport(): Transport {
   const signer = getSigner();
   if (config.useX402 && signer) {
-    return createX402Transport(signer.account, config.privateKey);
+    return createX402Transport(signer.account);
   }
   return http(config.rpcUrl);
 }
@@ -101,7 +101,7 @@ export function getFundingClients() {
 
 export function requireWallet() {
   if (!account || !walletClient) {
-    throw new Error("Wallet is not configured. Set KEYSTORE_PATH for an encrypted keystore or legacy PRIVATE_KEY in .env.");
+    throw new Error("Wallet is not configured. Set KEYSTORE_PATH to an encrypted keystore and unlock it with KEYSTORE_PASSWORD.");
   }
 
   return { account, walletClient };

@@ -36,6 +36,12 @@ export interface Verdict {
   usdc?: number;
 }
 
+export const EASY_MODE_POLICY_CAPS = {
+  maxMintEth: "0.01",
+  maxPerRequestUsdc: 1,
+  dailyUsdc: 20,
+} as const;
+
 export class PolicyDeniedError extends Error {
   readonly rule: string;
   readonly hint: string;
@@ -112,6 +118,32 @@ export function loadPolicy(): PolicyConfig {
   if (!existsSync(path)) return sanitizePolicy({});
   const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<PolicyConfig>;
   return sanitizePolicy(raw);
+}
+
+export function validateEasyModePolicyCaps(policy: PolicyConfig): string | null {
+  if (policy.mode !== "enforce") {
+    return "Easy Mode requires the wallet signing policy in enforce mode.";
+  }
+
+  let maxMint: bigint;
+  try {
+    maxMint = parseEther(policy.maxMintEth);
+  } catch {
+    return "The policy mint cap is invalid.";
+  }
+  if (maxMint < 0n || maxMint > parseEther(EASY_MODE_POLICY_CAPS.maxMintEth)) {
+    return `The policy mint cap must not exceed ${EASY_MODE_POLICY_CAPS.maxMintEth} ETH.`;
+  }
+
+  const perRequest = policy.x402.maxPerRequestUsdc;
+  const daily = policy.x402.dailyUsdc;
+  if (!Number.isFinite(perRequest) || perRequest < 0 || perRequest > EASY_MODE_POLICY_CAPS.maxPerRequestUsdc) {
+    return `The x402 per-request cap must be between 0 and ${EASY_MODE_POLICY_CAPS.maxPerRequestUsdc} USDC.`;
+  }
+  if (!Number.isFinite(daily) || daily < 0 || daily > EASY_MODE_POLICY_CAPS.dailyUsdc) {
+    return `The x402 daily cap must be between 0 and ${EASY_MODE_POLICY_CAPS.dailyUsdc} USDC.`;
+  }
+  return null;
 }
 
 export function writeDefaultPolicyFile(overwrite = false): string {
@@ -247,4 +279,3 @@ export function evaluateTypedData(req: TypedDataEvaluationRequest): Verdict {
 export function getPayoutAddress(policy = loadPolicy()): Address | undefined {
   return policy.payout;
 }
-

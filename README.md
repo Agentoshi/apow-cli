@@ -1,6 +1,9 @@
 # APoW CLI
 
-Mining client for the [APoW (Agentic Proof of Work)](https://github.com/Agentoshi/apow-core) protocol on Base. Mint or buy an ERC-721 Mining Rig, then compete on hash power while each mine submits lightweight SMHL plus a Keccak proof to earn $AGENT tokens.
+Agent-first mining client for [APoW (Agentic Proof of Work)](https://apow.io) on
+Base. Onboard a Mining Rig, then run the protocol's SMHL and Keccak verification
+flow continuously to earn $AGENT tokens. The contracts are
+[open source](https://github.com/Agentoshi/apow-core).
 
 **Your agent does all the work. You just fund a wallet.**
 
@@ -8,8 +11,9 @@ Mining client for the [APoW (Agentic Proof of Work)](https://github.com/Agentosh
 - `Easy Mode`: no config, x402 for RPC + LLM + GPU grinding
 - `Advanced Mode`: choose which credentials you supply and which services stay autonomous
 
-`apow start` is the fastest path when you want the full flow in one command:
-setup, funding checks, minting, and mining.
+`apow start` is the fastest path: choose Easy or Advanced Mode, complete the
+mandatory Base funding handoff, mint, and mine continuously. Agents can select
+the same existing Easy Mode directly with `apow start --easy`.
 
 ## Install
 
@@ -34,39 +38,29 @@ npx apow-cli
 
 ## For AI Agents
 
-Any AI agent can go from zero to actively mining with no human interaction except funding the wallet.
-If the wallet is already configured, `apow start` skips ahead automatically.
+Mining cannot begin until the dedicated wallet has ETH and USDC on Base. The
+same command handles both phases: it first creates/configures the wallet and
+prints its funding address, then automatically mints and mines when rerun after
+the user funds that address and confirms funding.
 
 ```bash
-npx apow-cli start
+npx --yes apow-cli@0.12.0 start --easy
 ```
 
-Easy Mode writes an `.env` equivalent to:
+Relevant Easy Mode settings include:
 
 ```bash
 KEYSTORE_PATH=~/.apow/keystores/wallet-0x....json
 USE_X402=true
 USE_X402_GRIND=true
 LLM_PROVIDER=clawrouter
-LLM_MODEL=blockrun/eco
 ALLOW_LOCAL_FALLBACK_WITH_X402=false
 ```
 
-The keystore password is prompted interactively. For headless agents or launch services, provide `KEYSTORE_PASSWORD` from your shell, process manager, or secret store.
-
-**Scale up** with multiple wallets from a single funded wallet:
-
-```bash
-# Generate sub-wallets and fund them from your main wallet
-npx apow-cli wallet new                    # → sub-wallet address + encrypted keystore path
-npx apow-cli wallet fund <sub-address>     # sends mint price + gas from main wallet
-
-# Mint + mine with each sub-wallet
-KEYSTORE_PATH=<sub-keystore> npx apow-cli mint
-KEYSTORE_PATH=<sub-keystore> npx apow-cli mine &
-```
-
-Each wallet gets one rig, each rig mines independently. More wallets = more chances to win each block. See [skill.md](skill.md) for the complete autonomous guide.
+The keystore password is prompted interactively. For headless launch services,
+provide `KEYSTORE_PASSWORD` from your shell, process manager, or secret store.
+Never put it in chat or commit it to a project file. See [skill.md](skill.md) for
+the narrow autonomous mining workflow.
 
 ## For Humans
 
@@ -82,23 +76,24 @@ If you want to control each step manually, the older step-by-step flow is still 
 
 | Command | Description |
 |---------|-------------|
-| `apow start` | Guided happy path: setup -> funding checks -> mint -> mine |
+| `apow start [--easy]` | Existing Easy/Advanced flow: setup -> Base funding check/handoff -> mint -> mine |
 | `apow setup` | Agent-first setup wizard: Easy Mode (x402 everywhere) or Advanced Mode |
-| `apow fund` | Fund your wallet: bridge from Solana/Ethereum or send on Base, auto-split ETH+USDC |
+| `apow fund` | Interactive bridge/deposit route and ETH+USDC auto-split |
 | `apow wallet new` | Generate a new encrypted mining wallet |
+| `apow wallet list` | List every wallet generated locally by this APoW CLI and mark the active wallet |
+| `apow wallet use [address-or-number]` | Select a generated wallet for the current project (`select` is an alias) |
 | `apow wallet show` | Show configured wallet address |
-| `apow wallet export` | Export your wallet's private key only with explicit confirmation or `--show-private-key` |
+| `apow wallet backup` | Show the encrypted keystore backup location; never display wallet secrets |
 | `apow wallet migrate` | Encrypt legacy `PRIVATE_KEY` into a keystore and clear `.env` |
 | `apow wallet payout set <addr>` | Configure a cold payout address for AGENT sweeps |
 | `apow wallet sweep [--all]` | Sweep mined AGENT, and optionally excess ETH/USDC, to payout |
 | `apow wallet fund <addr> [eth]` | Send ETH to another address (default: mint price + gas) |
 | `apow policy show/init/set mode` | Inspect or change local signing policy |
-| `apow mint` | Mint a MiningAgent NFT (one per wallet) |
-| `apow mine [tokenId]` | Mine $AGENT with your NFT (auto-detects best rig) |
-| `apow stats [tokenId]` | View mining stats, earnings, difficulty |
-| `apow dashboard start` | Launch multi-wallet mining dashboard |
-| `apow dashboard add <addr>` | Add a wallet to the dashboard |
-| `apow dashboard scan [dir]` | Auto-detect encrypted `wallet-0x*.json` files and legacy `wallet-0x*.txt` import helpers by filename |
+| `apow mint` | Confirm and mint a MiningAgent NFT (one per wallet) |
+| `apow mine [tokenId]` | Mine $AGENT continuously (auto-detects best rig) |
+| `apow stats [tokenId]` | View mining stats |
+| `apow dashboard start` | Launch the local APoW-wallet dashboard |
+| `apow dashboard wallets` | List wallets generated locally by this CLI |
 
 ## Configuration
 
@@ -106,19 +101,18 @@ Create a `.env` file or use `apow setup`:
 
 ```bash
 KEYSTORE_PATH=~/.apow/keystores/wallet-0x....json  # Preferred: encrypted wallet JSON
-USE_X402=true                  # Auto-pay RPC + LLM via x402 (2.00 USDC minimum starting balance, zero API keys)
+USE_X402=true                  # Auto-pay RPC + LLM via x402 (2.00 USDC minimum starting balance, no API keys)
 USE_X402_GRIND=true            # Auto-pay remote GPU grinding via x402
 ALLOW_LOCAL_FALLBACK_WITH_X402=false  # Easy Mode default: do not burn local CPU while x402 GPU is active
 # STALE_CHECK_INTERVAL=5       # Seconds between stale-challenge checks while grinding (default: 5)
 # RPC_URL=https://...          # Or: bring your own RPC (free from Alchemy, QuickNode, etc.)
-# LLM_PROVIDER=clawrouter     # clawrouter (auto with x402) | openai | gemini | deepseek | qwen | anthropic | ollama (for minting)
-# LLM_MODEL=blockrun/eco      # Auto-detected per provider; override only if needed
-# LLM_API_KEY=sk-...          # Not needed with clawrouter/ollama; required for openai/gemini/etc.
+# LLM_PROVIDER=clawrouter     # x402: clawrouter | API key: openai/anthropic/gemini/deepseek/qwen | local/subscription CLI: ollama/claude-code/codex
+# LLM_MODEL=...              # Optional override; x402 selects automatically
+# LLM_API_KEY=sk-...          # Required only for API-key providers
 # KEYSTORE_PASSWORD=...       # Headless unlock only; prefer shell/process secret storage over committing to .env
 # KEYSTORE_PASSWORD_CMD=...   # Preferred headless unlock command, stdout is used as password
 # APOW_POLICY=enforce         # enforce | warn | off
 # APOW_PAYOUT_ADDRESS=0x...   # optional cold payout wallet for AGENT sweeps
-# PRIVATE_KEY=0x...           # Legacy/headless escape hatch. Prefer KEYSTORE_PATH for generated wallets.
 # Bridging (only for `apow fund`)
 # SOLANA_RPC_URL=https://api.mainnet-beta.solana.com
 # ETHEREUM_RPC_URL=https://cloudflare-eth.com
@@ -137,14 +131,15 @@ Mining requires a hot EOA because the immutable APoW contracts require direct wa
 - every transaction and x402 typed-data signature goes through a local policy guard;
 - mined AGENT can be swept to a separate payout address with `apow wallet payout set <addr>` — AGENT transfers are frozen on-chain until the LP pool deploys, so the CLI skips AGENT sweeps until `lpDeployed` flips and then activates them automatically (ETH/USDC sweeps via `--all` work immediately);
 - audit and spend ledgers are written under `~/.apow/audit-<address>.jsonl` and `~/.apow/spend-<address>.jsonl`;
-- child grinder and local LLM processes do not receive `PRIVATE_KEY`, `KEYSTORE_PASSWORD`, or `APOW_KEYSTORE_PASSWORD`;
-- plaintext exports require `--i-understand-plaintext-risk` and an interactive `PLAINTEXT` confirmation.
+- child grinder and local LLM processes do not receive wallet or keystore-password secrets;
+- generated wallets are written only as encrypted keystores, and wallet commands never print or write a raw-key export;
+- Easy Mode refuses to run if the enforce-mode mint or x402 policy caps were relaxed beyond its defaults;
+- `apow start --easy` selects the existing Easy Mode without adding a second approval or wallet-control system.
 
 Useful commands:
 
 ```bash
 apow policy show
-apow policy set mode warn      # temporary soak/debug mode
 apow wallet payout set 0x...
 apow wallet sweep
 apow wallet migrate            # convert legacy PRIVATE_KEY to KEYSTORE_PATH
@@ -158,21 +153,50 @@ KEYSTORE_PASSWORD_CMD="security find-generic-password -s apow-keystore -w"
 
 ## LLM Providers (for Minting)
 
-An LLM is required when minting a new Mining Rig NFT because the mint gate uses a 20-second SMHL challenge. Secondary-purchased rigs can mine without minting. Mining still submits SMHL every time, but the CLI solves mining SMHL algorithmically with no LLM call.
+An LLM is required when minting a new Mining Rig NFT because the mint gate uses a
+20-second SMHL challenge. Easy Mode handles SMHL and mining automatically after
+the user funds the dedicated wallet.
 
-| Provider | Model | Cost/call | Notes |
-|----------|-------|-----------|-------|
-| ClawRouter | `blockrun/eco` | ~$0.006 | Recommended. Zero credentials, pays with USDC via x402 |
+Advanced Step 3 groups the choices by payment and execution model:
+
+1. **Auto** — Zero Config via x402. The model is selected automatically and each
+   request is paid from the mining wallet's Base USDC balance.
+2. **API key** — OpenAI, Anthropic, Gemini, DeepSeek, or Qwen.
+3. **Local / subscription CLI** — Ollama runs inference on the user's machine;
+   Claude Code and Codex run local command-line clients but use hosted models and
+   the user's existing subscription allowance.
+
+| Provider | Default model | Billing | Notes |
+|----------|---------------|---------|-------|
+| Auto via x402 | Automatic | Wallet-paid USDC | Zero Config; no API key or model selection required |
 | OpenAI | `gpt-4o-mini` | ~$0.001 | Cheapest API key option, fast |
 | Gemini | `gemini-2.5-flash` | ~$0.001 | Fast, good accuracy |
 | DeepSeek | `deepseek-chat` | ~$0.001 | Fast, accessible in China |
 | Qwen | `qwen-plus` | ~$0.002 | Alibaba Cloud |
 | Anthropic | `claude-sonnet-4-5-20250929` | ~$0.005 | Works but slower |
-| Ollama | `llama3.1` | Free | Local GPU required |
+| Ollama | `llama3.1` | Local compute | Truly local inference; Ollama must be running with the model installed |
+| Claude Code | `haiku` | Claude subscription allowance | Hosted inference through an installed, signed-in CLI |
+| Codex | `gpt-5.6-luna` | ChatGPT subscription allowance | Hosted inference through an installed, signed-in CLI |
+
+Prepare one of the local/subscription choices before minting:
+
+```bash
+ollama pull llama3.1   # Ollama only; keep the Ollama service running
+claude login           # Claude Code; sign in with the intended Claude subscription
+codex login            # Codex; choose ChatGPT subscription access
+```
+
+APoW disables Claude Code tools and session persistence. It runs Codex from an
+isolated temporary directory in ephemeral, read-only mode. Both child processes
+receive a strict environment allowlist rather than wallet secrets or API-billing
+keys. Both subscription adapters passed off-chain SMHL command tests; neither is
+yet recorded as a completed APoW mainnet mint.
 
 ## Funding (v0.7.0+)
 
-Mining requires two assets on Base: **ETH** (gas) and **USDC** (x402 RPC). `apow start` checks both and can auto-split the wallet into the right mix. The `fund` command also bridges from Solana or Ethereum, or accepts deposits on Base, and auto-splits into both:
+Mining requires two assets on Base: **ETH** (gas) and **USDC** (x402 RPC).
+`apow start` checks both and gives a Base funding handoff without moving funds.
+The separate `fund` command provides an interactive bridge or auto-split flow:
 
 ```bash
 # From Solana (deposit address — send from any wallet, QR code included)
@@ -248,43 +272,29 @@ The CUDA grinder runs over SSH alongside your local Metal/CPU grinders — genui
 
 ### Other Optimizations
 
-- **Algorithmic SMHL**: Mining SMHL challenges are solved algorithmically in microseconds (no LLM call), then submitted on-chain with the hash proof.
 - **Faster stale restarts**: The miner re-checks the challenge every 5 seconds by default and aborts dead work quickly across local, native GPU/CPU, and x402 grinding.
 - **JS threads**: If no native grinders are found, falls back to `worker_threads` across all CPU cores. Set `MINER_THREADS` in `.env` to override.
 
 ## Dashboard
 
-Monitor your entire mining fleet from a single web UI. Zero external dependencies -- vanilla HTML/JS served by the CLI. The dashboard loads once, then only refreshes chain data when you click **Refresh** or switch fleets, so it does not burn RPC quota in the background.
+Monitor wallets generated locally by this APoW CLI from a single web UI. Zero external dependencies -- vanilla HTML/JS served by the CLI on `127.0.0.1` only. The dashboard does not scan directories, ingest wallet files, accept manually added addresses, or load external fleet configurations. It loads once, then only refreshes chain data when you click **Refresh**, so it does not burn RPC quota in the background.
 
 ```bash
-# Quick start: scan wallet files and launch
-apow dashboard scan .          # detect wallet-0x*.json and legacy .txt filenames in current directory
-apow dashboard start           # open dashboard at http://localhost:3847
+# Quick start: generate an encrypted wallet and launch
+apow wallet new
+apow dashboard start           # open http://localhost:3847
 ```
 
 ### Commands
 
 | Command | Description |
 |---------|-------------|
-| `apow dashboard start` | Launch dashboard web UI (default port 3847) |
-| `apow dashboard add <addr>` | Add a wallet address to monitor |
-| `apow dashboard remove <addr>` | Remove a wallet from monitoring |
-| `apow dashboard scan [dir]` | Auto-detect wallets from encrypted `wallet-0x*.json` files and legacy `wallet-0x*.txt` import helpers |
-| `apow dashboard wallets` | List all monitored wallets |
+| `apow dashboard start` | Launch dashboard web UI |
+| `apow dashboard wallets` | List wallets generated locally by this CLI |
 
-### Fleet Configuration
+### Wallet Scope
 
-Wallets are stored in `~/.apow/wallets.json` (plain JSON array of addresses). For advanced fleet management, create `~/.apow/fleets.json`:
-
-```json
-[
-  { "name": "Local", "type": "array", "path": "/home/user/.apow/wallets.json" },
-  { "name": "Vast.ai", "type": "rigdirs", "path": "/mnt/mining/rigs" },
-  { "name": "Pool", "type": "walletfiles", "path": "/mnt/mining/wallets" }
-]
-```
-
-Fleet types: `array` (JSON array of addresses), `solkek` (master/miners JSON), `rigdirs` (scan `rig*/wallet-0x*.json` or legacy `.txt` filenames), `walletfiles` (scan `wallet-0x*.json` or legacy `.txt` filenames).
+`~/.apow/generated-wallets.json` records only addresses and encrypted-keystore paths created by `apow wallet new` or the setup wizard's new-wallet flow. A wallet appears only while its matching keystore exists under `~/.apow/keystores/`. Imported wallets, arbitrary addresses, legacy plaintext files, and unrelated filesystem artifacts are intentionally excluded.
 
 Refreshes use chunked multicalls and a 25-second cache. Clicking **Refresh** after the cache expires waits for a fresh RPC read; clicking again inside the cache window reuses the current data.
 

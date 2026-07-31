@@ -171,7 +171,7 @@ const patterns: Array<{
     test: (m) => m.includes("EADDRINUSE") && m.includes("8402"),
     classify: () => ({
       category: "setup",
-      userMessage: "ClawRouter proxy port 8402 is already in use",
+      userMessage: "The local x402 LLM service port 8402 is already in use",
       recovery: "Set CLAWROUTER_PORT in .env to use a different port",
     }),
   },
@@ -179,7 +179,7 @@ const patterns: Array<{
     test: (m) => m.toLowerCase().includes("insufficient") && m.toLowerCase().includes("clawrouter"),
     classify: () => ({
       category: "setup",
-      userMessage: "Insufficient USDC for ClawRouter x402 LLM payment",
+      userMessage: "Insufficient USDC for the x402 LLM payment",
       recovery: "Send USDC to your wallet on Base",
     }),
   },

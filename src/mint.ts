@@ -16,6 +16,7 @@ const ZERO_SEED = `0x${"0".repeat(64)}` as Hex;
 const MINT_GAS_RESERVE_ETH = parseEther("0.003");
 
 export interface MintFlowOptions {
+  easyMode?: boolean;
   startMiningAfterMint?: boolean;
 }
 
@@ -126,8 +127,7 @@ export async function runMintFlow(options: MintFlowOptions = {}): Promise<bigint
     return null;
   }
 
-  // Confirm before spending ETH
-  const proceed = await ui.confirm("Proceed with mint?");
+  const proceed = options.easyMode === true || await ui.confirm("Proceed with mint?");
   if (!proceed) {
     console.log("  Mint cancelled.");
     return null;
@@ -280,13 +280,10 @@ export async function runMintFlow(options: MintFlowOptions = {}): Promise<bigint
   // Offer to start mining
   if (options.startMiningAfterMint === true) {
     setSignerContext("mine");
-    await startMining(tokenId);
+    await startMining(tokenId, { easyMode: options.easyMode === true });
   } else if (options.startMiningAfterMint !== false) {
-    const startMine = await ui.confirm("Start mining?");
-    if (startMine) {
-      setSignerContext("mine");
-      await startMining(tokenId);
-    }
+    setSignerContext("mine");
+    await startMining(tokenId);
   }
 
   return tokenId;

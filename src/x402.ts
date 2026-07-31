@@ -8,24 +8,23 @@ const X402_RPC_TIMEOUT_MS = 10_000;
 
 let _client: QuicknodeX402Client | null = null;
 
-async function getClient(account: LocalAccount, legacyPrivateKey?: `0x${string}`): Promise<QuicknodeX402Client> {
+async function getClient(account: LocalAccount): Promise<QuicknodeX402Client> {
   if (_client && !_client.isTokenExpired()) return _client;
 
   const { createQuicknodeX402Client } = await import("@quicknode/x402");
-  const useLegacy = process.env.APOW_X402_LEGACY_SIGNER === "true" && legacyPrivateKey;
   _client = await createQuicknodeX402Client({
     baseUrl: QUICKNODE_BASE,
     network: BASE_MAINNET,
-    ...(useLegacy ? { evmPrivateKey: legacyPrivateKey } : { evmSigner: account }),
+    evmSigner: account,
     paymentModel: "pay-per-request",
   });
   return _client;
 }
 
-export function createX402Transport(account: LocalAccount, legacyPrivateKey?: `0x${string}`): Transport {
+export function createX402Transport(account: LocalAccount): Transport {
   return custom({
     async request({ method, params }) {
-      const client = await getClient(account, legacyPrivateKey);
+      const client = await getClient(account);
       const response = await client.fetch(`${QUICKNODE_BASE}/base-mainnet`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

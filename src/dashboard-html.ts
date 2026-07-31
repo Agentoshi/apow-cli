@@ -33,10 +33,6 @@ a{color:inherit;text-decoration:none}
 .rpc-warning a:hover{color:#fed7aa}
 .error-banner{border-radius:6px;border:1px solid #7f1d1d;background:rgba(69,10,10,.3);padding:8px 12px;font-size:12px;color:#f87171;margin-bottom:12px}
 /* Fleet tabs */
-.fleet-tabs{display:flex;align-items:center;gap:4px;margin-bottom:12px;overflow-x:auto}
-.fleet-tab{padding:4px 12px;font-size:12px;border-radius:4px;cursor:pointer;white-space:nowrap;border:1px solid transparent;background:var(--card);color:var(--text-dim);transition:all .15s}
-.fleet-tab:hover{color:var(--text)}
-.fleet-tab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 /* Stats grid */
 .stats-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--card-border);border-radius:8px;overflow:hidden;margin-bottom:12px}
 @media(min-width:640px){.stats-grid{grid-template-columns:repeat(5,1fr)}}
@@ -89,26 +85,23 @@ a{color:inherit;text-decoration:none}
   </div>
   <div id="rpcWarning" class="rpc-warning" style="display:none">
     Set <code>RPC_URL</code> in your <code>.env</code> for reliable dashboard refreshes.
-    A dedicated Base RPC is recommended for fleets.
+    A dedicated Base RPC is recommended.
   </div>
   <div id="errorBanner" class="error-banner" style="display:none">Failed to fetch data. Check RPC connection.</div>
-  <div id="fleetTabs" class="fleet-tabs" style="display:none"></div>
   <div id="statsGrid" class="stats-grid" style="display:none"></div>
   <div id="walletGrid" class="wallet-grid"></div>
   <div id="emptyState" class="empty-state" style="display:none">
-    <h2>No wallets detected.</h2>
-    <p>To add wallets:</p>
+    <h2>No locally generated APoW wallets.</h2>
+    <p>Create one with:</p>
     <div class="cmds">
-      <div><code>apow dashboard add &lt;address&gt;</code> <span>— add a specific address</span></div>
-      <div><code>apow dashboard scan</code> <span>— auto-detect from wallet files in current dir</span></div>
+      <div><code>apow wallet new</code></div>
     </div>
-    <p class="hint">Wallets are also auto-detected from your unlocked CLI wallet on dashboard start.</p>
+    <p class="hint">The dashboard intentionally ignores imported wallets and filesystem wallet files.</p>
   </div>
   <div id="loading" class="loading">Loading...</div>
 </div>
 <script>
 (function(){
-  var activeFleet = 'All';
   var balanceHistory = [];
   var prevMines = {};
   var activeWallets = {};
@@ -182,27 +175,6 @@ a{color:inherit;text-decoration:none}
         delete activeWallets[w.address];
       }
       prevMines[w.address] = totalMines;
-    }
-  }
-
-  function renderFleetTabs(fleets) {
-    var el = document.getElementById('fleetTabs');
-    if (!fleets || fleets.length <= 1) { el.style.display = 'none'; return; }
-    el.style.display = 'flex';
-    var totalCount = 0;
-    for (var i = 0; i < fleets.length; i++) totalCount += fleets[i].walletCount;
-    var html = '<div class="fleet-tab' + (activeFleet === 'All' ? ' active' : '') + '" data-fleet="All">All (' + totalCount + ')</div>';
-    for (var i = 0; i < fleets.length; i++) {
-      var f = fleets[i];
-      html += '<div class="fleet-tab' + (activeFleet === f.name ? ' active' : '') + '" data-fleet="' + escapeHtml(f.name) + '">' + escapeHtml(f.name) + ' (' + f.walletCount + ')</div>';
-    }
-    el.innerHTML = html;
-    var tabs = el.querySelectorAll('.fleet-tab');
-    for (var t = 0; t < tabs.length; t++) {
-      tabs[t].addEventListener('click', function() {
-        activeFleet = this.getAttribute('data-fleet');
-        refresh();
-      });
     }
   }
 
@@ -313,15 +285,13 @@ a{color:inherit;text-decoration:none}
     if (isRefreshing) return;
     isRefreshing = true;
     setStatus(true);
-    var fleetParam = encodeURIComponent(activeFleet);
     Promise.all([
       fetchJson('/api/network').catch(function(e) { return null; }),
-      fetchJson('/api/wallets?fleet=' + fleetParam).catch(function(e) { return null; }),
-      fetchJson('/api/fleets').catch(function(e) { return null; }),
+      fetchJson('/api/wallets').catch(function(e) { return null; }),
       fetchJson('/api/config').catch(function(e) { return null; })
     ]).then(function(results) {
       document.getElementById('loading').style.display = 'none';
-      var net = results[0], wal = results[1], fleets = results[2], cfg = results[3];
+      var net = results[0], wal = results[1], cfg = results[2];
       hasError = !net && !wal;
       document.getElementById('errorBanner').style.display = hasError ? 'block' : 'none';
       if (net) networkData = net;
@@ -332,7 +302,6 @@ a{color:inherit;text-decoration:none}
       if (cfg) {
         document.getElementById('rpcWarning').style.display = cfg.rpcIsDefault ? 'block' : 'none';
       }
-      renderFleetTabs(fleets);
       renderStats(walletsData, networkData);
       renderWallets(walletsData);
       isRefreshing = false;

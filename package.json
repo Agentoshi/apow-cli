@@ -1,6 +1,6 @@
 {
   "name": "apow-cli",
-  "version": "0.11.19",
+  "version": "0.12.0",
   "description": "Mine AGENT tokens on Base L2 with Agentic Proof of Work",
   "keywords": [
     "apow",
@@ -18,7 +18,10 @@
     "type": "git",
     "url": "https://github.com/Agentoshi/apow-cli.git"
   },
-  "homepage": "https://github.com/Agentoshi/apow-cli",
+  "homepage": "https://apow.io",
+  "bugs": {
+    "url": "https://github.com/Agentoshi/apow-cli/issues"
+  },
   "bin": {
     "apow": "dist/index.js",
     "apow-cli": "dist/index.js"
@@ -46,10 +49,9 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@blockrun/clawrouter": "^0.12.81",
+    "@blockrun/clawrouter": "0.12.81",
     "@noble/hashes": "^1.8.0",
     "@quicknode/x402": "^0.1.2",
-    "@solana/web3.js": "^1.98.0",
     "@x402/evm": "^2.8.0",
     "@x402/fetch": "^2.8.0",
     "commander": "^14.0.0",
@@ -61,7 +63,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.6.0",
-    "tsx": "^4.20.5",
+    "tsx": "^4.23.1",
     "typescript": "^5.9.3"
   }
 }

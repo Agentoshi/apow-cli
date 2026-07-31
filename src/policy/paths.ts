@@ -3,7 +3,8 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 export function ensureApowDir(): string {
-  const dir = join(homedir(), ".apow");
+  const override = process.env.APOW_DATA_DIR?.trim();
+  const dir = override ? resolve(expandHome(override)) : join(homedir(), ".apow");
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
@@ -33,4 +34,3 @@ export function auditPath(address: string): string {
 export function spendPath(address: string): string {
   return join(ensureApowDir(), `spend-${address.toLowerCase()}.jsonl`);
 }
-

@@ -77,8 +77,9 @@ export function resolveDefaultModel(provider: LlmProvider): string {
     case "anthropic": return "claude-sonnet-4-5-20250929";
     case "deepseek": return "deepseek-chat";
     case "qwen": return "qwen-plus";
-    case "claude-code":
-    case "codex": return "default";
+    case "ollama": return "llama3.1";
+    case "claude-code": return "haiku";
+    case "codex": return "gpt-5.6-luna";
     default: return "gpt-4o-mini";
   }
 }
@@ -109,7 +110,7 @@ function parsePrivateKey(value?: string): Hex | undefined {
   return value as Hex;
 }
 
-function resolveKeystorePassword(): string {
+export function resolveKeystorePassword(): string {
   const sessionPassword = getSessionPassword();
   if (sessionPassword) return sessionPassword;
   const envPassword = process.env.KEYSTORE_PASSWORD?.trim()
@@ -267,7 +268,7 @@ export function reloadConfig(): AppConfig {
 
 export function requirePrivateKey(): Hex {
   if (!config.privateKey) {
-    throw new Error("An unlocked wallet signer is required. Configure KEYSTORE_PATH plus KEYSTORE_PASSWORD, or use legacy PRIVATE_KEY.");
+    throw new Error("An unlocked wallet signer is required. Configure KEYSTORE_PATH and unlock it with KEYSTORE_PASSWORD.");
   }
 
   return config.privateKey;
@@ -312,6 +313,7 @@ export async function writeEnvFile(values: Record<string, string>): Promise<void
     for (const line of existingContent.split(/\r?\n/)) {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith("#")) {
+        preserved.push(line);
         continue;
       }
       const eq = line.indexOf("=");

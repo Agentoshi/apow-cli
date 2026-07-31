@@ -1,9 +1,16 @@
-import { exec, execFile } from "node:child_process";
+import { execFile } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import OpenAI from "openai";
 
 import { config, requireLlmApiKey, resolveDefaultModel, type LlmProvider } from "./config";
-import { childEnv } from "./secure-env";
+import { claudeSubscriptionEnv, codexSubscriptionEnv } from "./secure-env";
 import { getSigner } from "./signer/local-keystore";
+
+const SMHL_SYSTEM_PROMPT =
+  "You generate short lowercase word sequences that match exact constraints. "
+  + "Return only the words separated by spaces. Do not use tools. Nothing else.";
 
 export interface SmhlChallenge {
   targetAsciiSum: number;
@@ -374,28 +381,96 @@ async function requestClawRouterSolution(prompt: string, model: string): Promise
   return response.choices[0]?.message.content ?? "";
 }
 
-async function requestClaudeCodeSolution(prompt: string): Promise<string> {
+function createIsolatedCliDirectory(prefix: string): string {
+  return mkdtempSync(join(tmpdir(), prefix));
+}
+
+function removeIsolatedCliDirectory(path: string): void {
+  try {
+    rmSync(path, { recursive: true, force: true });
+  } catch {
+    // Best-effort cleanup after a short-lived, non-persistent inference run.
+  }
+}
+
+async function requestClaudeCodeSolution(prompt: string, model: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const escaped = prompt.replace(/'/g, "'\\''");
-    exec(`claude -p '${escaped}'`, { timeout: 120_000, env: childEnv() }, (error, stdout, stderr) => {
-      if (error) {
-        reject(new Error(`Claude Code error: ${error.message}${stderr ? `\nstderr: ${stderr}` : ""}${stdout ? `\nstdout: ${stdout}` : ""}`));
-        return;
-      }
-      resolve(stdout.trim());
-    });
+    const cwd = createIsolatedCliDirectory("apow-claude-smhl-");
+    execFile(
+      "claude",
+      [
+        "-p",
+        prompt,
+        "--no-session-persistence",
+        "--safe-mode",
+        "--disable-slash-commands",
+        "--tools",
+        "",
+        "--model",
+        model,
+        "--effort",
+        "low",
+        "--system-prompt",
+        SMHL_SYSTEM_PROMPT,
+      ],
+      {
+        cwd,
+        timeout: 15_000,
+        maxBuffer: 64 * 1024,
+        env: claudeSubscriptionEnv(),
+      },
+      (error, stdout, stderr) => {
+        removeIsolatedCliDirectory(cwd);
+        if (error) {
+          reject(new Error(`Claude Code error: ${error.message}${stderr ? `\nstderr: ${stderr}` : ""}${stdout ? `\nstdout: ${stdout}` : ""}`));
+          return;
+        }
+        resolve(stdout.trim());
+      },
+    );
   });
 }
 
-async function requestCodexSolution(prompt: string): Promise<string> {
+async function requestCodexSolution(prompt: string, model: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile("codex", ["exec", prompt, "--full-auto"], { timeout: 15_000, env: childEnv() }, (error, stdout, stderr) => {
-      if (error) {
-        reject(new Error(`Codex error: ${error.message}${stderr ? `\nstderr: ${stderr}` : ""}${stdout ? `\nstdout: ${stdout}` : ""}`));
-        return;
-      }
-      resolve(stdout.trim());
-    });
+    const cwd = createIsolatedCliDirectory("apow-codex-smhl-");
+    const child = execFile(
+      "codex",
+      [
+        "exec",
+        "--ephemeral",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--sandbox",
+        "read-only",
+        "--skip-git-repo-check",
+        "--color",
+        "never",
+        "--model",
+        model,
+        "--config",
+        'model_reasoning_effort="low"',
+        "--config",
+        'shell_environment_policy.inherit="none"',
+        "-",
+      ],
+      {
+        cwd,
+        timeout: 15_000,
+        maxBuffer: 64 * 1024,
+        env: codexSubscriptionEnv(),
+      },
+      (error, stdout, stderr) => {
+        removeIsolatedCliDirectory(cwd);
+        if (error) {
+          reject(new Error(`Codex error: ${error.message}${stderr ? `\nstderr: ${stderr}` : ""}${stdout ? `\nstdout: ${stdout}` : ""}`));
+          return;
+        }
+        resolve(stdout.trim());
+      },
+    );
+    child.stdin?.on("error", () => {});
+    child.stdin?.end(`${SMHL_SYSTEM_PROMPT}\n\n${prompt}`);
   });
 }
 
@@ -412,7 +487,13 @@ function resolveProviderOrder(): LlmProvider[] {
 }
 
 function describeProvider(provider: LlmProvider): string {
-  return provider === "claude-code" ? "Claude Code" : provider === "clawrouter" ? "ClawRouter" : provider;
+  return provider === "claude-code"
+    ? "Claude Code"
+    : provider === "codex"
+      ? "Codex"
+      : provider === "clawrouter"
+        ? "ClawRouter"
+        : provider;
 }
 
 function isPermanentProviderError(message: string): boolean {
@@ -440,9 +521,9 @@ async function requestProviderSolution(provider: LlmProvider, prompt: string): P
     case "ollama":
       return requestOllamaSolutionForModel(prompt, model);
     case "claude-code":
-      return requestClaudeCodeSolution(prompt);
+      return requestClaudeCodeSolution(prompt, model);
     case "codex":
-      return requestCodexSolution(prompt);
+      return requestCodexSolution(prompt, model);
     case "deepseek":
       return requestDeepSeekSolutionForModel(prompt, model);
     case "qwen":
