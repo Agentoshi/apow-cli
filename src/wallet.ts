@@ -5,7 +5,7 @@ import { config } from "./config";
 import { getSigner, resetSigner } from "./signer/local-keystore";
 import { createX402Transport } from "./x402";
 
-const DATA_SUFFIX = Attribution.toDataSuffix({ codes: ["bc_6wfeb1kd"] });
+export const DATA_SUFFIX = Attribution.toDataSuffix({ codes: ["bc_6wfeb1kd"] });
 
 function getTransport(): Transport {
   const signer = getSigner();

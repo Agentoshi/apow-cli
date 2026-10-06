@@ -49,7 +49,7 @@ The [managed cloud service](https://apow.io/docs/technical/managed-mining) is in
 development; the current CLI still needs a runner.
 
 ```bash
-npx --yes apow-cli@0.12.2 start --easy
+npx --yes apow-cli@0.12.3 start --easy
 ```
 
 Relevant Easy Mode settings include:
@@ -206,7 +206,9 @@ Send **one asset: Base ETH**. `apow start --easy` quotes the current rig price,
 a conservative 0.003 ETH reserve, swap gas, and the missing 2 USDC service budget.
 The reserve is not the actual gas cost per mine. The Uniswap quote includes a
 2% input buffer and requires enough USDC output; the CLI checks balances again
-after the swap. It stops if conversion would consume the required ETH reserve.
+after the swap. The fee budget uses current L2 fee caps, a fixed transaction gas
+ceiling, and buffered Base L1/operator fees. Those L2 caps are used when signing.
+It stops if conversion would consume the required ETH reserve.
 
 ```bash
 apow start --easy                       # quote, deposit ETH, then rerun to convert/mint/mine

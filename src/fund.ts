@@ -3,7 +3,7 @@ import { account, getFundingClients } from "./wallet";
 import { detectMinersWithClient } from "./detect";
 import { prepareBaseFunding } from "./base-funding";
 import { getDepositAddress, pollBridgeStatus, SQUID_ROUTES } from "./bridge/squid";
-import { quoteUsdcForEth, swapUsdcToEth } from "./bridge/uniswap";
+import { quoteEthSwapFees, quoteUsdcForEth, swapUsdcToEth } from "./bridge/uniswap";
 import * as ui from "./ui";
 
 export interface FundOptions {
@@ -48,8 +48,9 @@ async function runBaseFund(mint: boolean, allowSwap: boolean): Promise<void> {
 /** Preserve the explicit legacy USDC route without asking for a second deposit asset. */
 async function convertExistingUsdc(mint: boolean): Promise<void> {
   const plan = await prepareBaseFunding(mint, false);
-  const gas = plan.requirements.swapGasReserve;
-  if (plan.balances.eth >= plan.requirements.ethReserve || plan.balances.eth < gas) return;
+  if (plan.balances.eth >= plan.requirements.ethReserve) return;
+  const gas = 2n * (await quoteEthSwapFees(plan.swapEth || 1n, plan.requirements.usdcTarget || 1n)).feeReserve;
+  if (plan.balances.eth < gas) return;
   const minimumEth = plan.requirements.ethReserve - plan.balances.eth + gas;
   const input = await quoteUsdcForEth(minimumEth);
   if (plan.balances.usdc < input + plan.requirements.usdcTarget) return;

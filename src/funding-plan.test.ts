@@ -46,3 +46,14 @@ test("swap gas is included in the deposit, but does not consume the post-swap mi
   g.deps.swapEth = async () => { g.deps.balances = async () => ({ eth: 3000n, usdc: 200n }); };
   assert.equal((await prepareFunding({ ...requirements, swapGasReserve: 50n }, g.deps, true)).ready, true);
 });
+test("live swap fees replace a smaller fixed allowance in the funding quote", async () => {
+  const f = fixture(3400n, 0n);
+  f.deps.quoteSwapGas = async () => 137n;
+  assert.equal((await prepareFunding({ ...requirements, swapGasReserve: 50n }, f.deps, false)).depositEth, 137n);
+});
+test("a failed fee quote stops before any swap", async () => {
+  const f = fixture(5000n, 0n);
+  f.deps.quoteSwapGas = async () => { throw new Error("fee oracle unavailable"); };
+  await assert.rejects(prepareFunding(requirements, f.deps, true), /fee oracle unavailable/);
+  assert.equal(f.swaps(), 0);
+});

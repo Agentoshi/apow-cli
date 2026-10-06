@@ -3,6 +3,7 @@ export interface FundingRequirements { ethReserve: bigint; usdcTarget: bigint; s
 export interface FundingDependencies {
   balances(): Promise<FundingBalances>;
   quoteEth(usdcOut: bigint): Promise<bigint>;
+  quoteSwapGas?(ethIn: bigint, minimumUsdcOut: bigint): Promise<bigint>;
   swapEth(ethIn: bigint, minimumUsdcOut: bigint): Promise<unknown>;
 }
 
@@ -16,7 +17,10 @@ export async function prepareFunding(
   const missingUsdc = requirements.usdcTarget > balances.usdc ? requirements.usdcTarget - balances.usdc : 0n;
   const swapEth = missingUsdc > 0n ? await deps.quoteEth(missingUsdc) : 0n;
   if (missingUsdc > 0n && swapEth <= 0n) throw new Error("Invalid ETH funding quote");
-  const requiredEth = requirements.ethReserve + swapEth + (missingUsdc > 0n ? requirements.swapGasReserve ?? 0n : 0n);
+  const swapGasReserve = missingUsdc > 0n
+    ? deps.quoteSwapGas ? await deps.quoteSwapGas(swapEth, missingUsdc) : requirements.swapGasReserve ?? 0n : 0n;
+  if (swapGasReserve < 0n) throw new Error("Invalid swap fee quote");
+  const requiredEth = requirements.ethReserve + swapEth + swapGasReserve;
   if (balances.eth < requiredEth) {
     return { ready: false, depositEth: requiredEth - balances.eth, swapEth, balances };
   }

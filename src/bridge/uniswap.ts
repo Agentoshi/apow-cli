@@ -2,10 +2,11 @@
 // No new npm deps — uses viem's built-in ABI encoding.
 
 import type { Address, Hex } from "viem";
-import { encodeFunctionData, formatEther, formatUnits } from "viem";
+import { concat, encodeFunctionData, formatEther, formatUnits } from "viem";
+import { estimateL1Fee } from "viem/op-stack";
 
 import { TOKENS, SLIPPAGE_BPS } from "./constants";
-import { getFundingClients, requireWallet } from "../wallet";
+import { DATA_SUFFIX, getFundingClients, requireWallet } from "../wallet";
 
 const SWAP_ROUTER = "0x2626664c2603336E57B271c5C0b26F421741e481" as Address;
 const WETH = TOKENS.base.weth;
@@ -108,6 +109,34 @@ const swapRouterAbi = [
   },
 ] as const;
 
+export interface SwapFeeBudget {
+  gas: bigint;
+  maxFeePerGas: bigint;
+  maxPriorityFeePerGas: bigint;
+  feeReserve: bigint;
+}
+
+/** Quote all Base fee components without requiring a funded sender. */
+export async function quoteEthSwapFees(ethAmount: bigint, minUsdcOut: bigint): Promise<SwapFeeBudget> {
+  const { publicClient, account } = getFundingClients();
+  if (!account) throw new Error("Unlock the same wallet before quoting swap fees");
+  const gas = 600_000n; // Explicit transaction ceiling, also used at signing.
+  const data = concat([encodeFunctionData({ abi: swapRouterAbi, functionName: "exactInputSingle", args: [{
+    tokenIn: WETH, tokenOut: USDC, fee: FEE_TIER, recipient: account.address,
+    amountIn: ethAmount, amountOutMinimum: minUsdcOut, sqrtPriceLimitX96: 0n,
+  }] }), DATA_SUFFIX]);
+  const [fees, l1Fee, scalar, constant] = await Promise.all([
+    publicClient.estimateFeesPerGas(),
+    estimateL1Fee(publicClient, { account: account.address, to: SWAP_ROUTER, data, value: ethAmount }),
+    publicClient.readContract({ address: "0x4200000000000000000000000000000000000015",
+      abi: [{ name: "operatorFeeScalar", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint32" }] }], functionName: "operatorFeeScalar" }),
+    publicClient.readContract({ address: "0x4200000000000000000000000000000000000015",
+      abi: [{ name: "operatorFeeConstant", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint64" }] }], functionName: "operatorFeeConstant" }),
+  ]);
+  const operatorFee = gas * BigInt(scalar) / 1_000_000n + BigInt(constant);
+  return { gas, ...fees, feeReserve: gas * fees.maxFeePerGas + 2n * (l1Fee + operatorFee) };
+}
+
 /** Get USDC balance for an address on Base. */
 export async function getUsdcBalance(address: Address): Promise<bigint> {
   const { publicClient } = getFundingClients();
@@ -127,6 +156,7 @@ export async function getUsdcBalance(address: Address): Promise<bigint> {
 export async function swapEthToUsdc(
   ethAmount: bigint,
   minUsdcOut: bigint,
+  fees?: SwapFeeBudget,
 ): Promise<{ txHash: Hex; usdcReceived: string }> {
   const walletContext = requireWallet();
   const { publicClient, walletClient, account } = getFundingClients();
@@ -149,6 +179,7 @@ export async function swapEthToUsdc(
       },
     ],
     value: ethAmount,
+    ...(fees ? { gas: fees.gas, maxFeePerGas: fees.maxFeePerGas, maxPriorityFeePerGas: fees.maxPriorityFeePerGas } : {}),
   });
 
   const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });

@@ -127,7 +127,7 @@ export async function grindNonceHttp(
       if (reason.includes("insufficient_balance")) {
         throw new Error("x402 GPU payment failed: insufficient USDC balance");
       } else if (reason.includes("simulation_failed")) {
-        throw new Error(`x402 GPU payment failed: EVM simulation failed (USDC approval issue?) [${reason}]`);
+        throw new Error(`x402 GPU payment failed: EVM simulation failed; check balance, policy, and service settlement RPC [${reason}]`);
       } else if (attempt === 1) {
         continue;
       } else {

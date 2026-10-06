@@ -1,7 +1,7 @@
 ---
 name: apow-mining
 description: Set up APoW Easy Mode with one Base ETH deposit, a recoverable encrypted wallet, and remote GPU mining.
-allowed-tools: Bash(npx --yes apow-cli@0.12.2 start --easy) Bash(npx --yes apow-cli@0.12.2 wallet verify-recovery)
+allowed-tools: Bash(npx --yes apow-cli@0.12.3 start --easy) Bash(npx --yes apow-cli@0.12.3 wallet verify-recovery)
 metadata:
   openclaw:
     requires:
@@ -40,7 +40,7 @@ Funding does not authorize access to another wallet or automatic top-ups.
 Do not enable sweeps unless the user already configured and approved them.
 
 ```bash
-npx --yes apow-cli@0.12.2 start --easy
+npx --yes apow-cli@0.12.3 start --easy
 ```
 
 Run only this pinned Easy Mode flow and the recovery check below in this skill.
@@ -56,7 +56,7 @@ process memory is not recoverable after a restart. A browser credential vault
 must not be assumed to provide CLI secrets.
 
 ```bash
-npx --yes apow-cli@0.12.2 wallet verify-recovery
+npx --yes apow-cli@0.12.3 wallet verify-recovery
 ```
 
 The CLI checks a fresh-process unlock of the **same address** before giving

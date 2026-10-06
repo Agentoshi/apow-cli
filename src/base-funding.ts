@@ -1,7 +1,7 @@
 import { formatEther, parseEther, parseUnits } from "viem";
 import { config } from "./config";
 import { MIN_ETH, MIN_USDC } from "./bridge/constants";
-import { getUsdcBalance, quoteEthForUsdc, swapEthToUsdc } from "./bridge/uniswap";
+import { getUsdcBalance, quoteEthForUsdc, quoteEthSwapFees, swapEthToUsdc, type SwapFeeBudget } from "./bridge/uniswap";
 import { prepareFunding } from "./funding-plan";
 import { account, getFundingClients } from "./wallet";
 import { getSignerContext, setSignerContext } from "./policy/context";
@@ -19,6 +19,7 @@ export async function prepareBaseFunding(needsMint: boolean, allowSwap: boolean)
   if (!account) throw new Error("Unlock the configured wallet before funding");
   const fundingAccount = account;
   const { publicClient } = getFundingClients();
+  if (await publicClient.getChainId() !== config.chain.id) throw new Error("Funding RPC chain does not match the configured network");
   const mintPrice = needsMint ? await publicClient.readContract({
     address: config.miningAgentAddress,
     abi: [{ name: "getMintPrice", type: "function", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] }],
@@ -30,6 +31,7 @@ export async function prepareBaseFunding(needsMint: boolean, allowSwap: boolean)
     swapGasReserve: SWAP_GAS_RESERVE_ETH,
   };
   const context = getSignerContext();
+  let swapFees: SwapFeeBudget | undefined;
   try {
     setSignerContext("fund");
     const plan = await prepareFunding(requirements, {
@@ -41,9 +43,13 @@ export async function prepareBaseFunding(needsMint: boolean, allowSwap: boolean)
         return { eth, usdc };
       },
       quoteEth: quoteEthForUsdc,
+      quoteSwapGas: async (eth, usdc) => {
+        swapFees = await quoteEthSwapFees(eth, usdc);
+        return swapFees.feeReserve;
+      },
       swapEth: async (eth, usdc) => {
         ui.info("Funding", `Converting ${formatEther(eth)} ETH to USDC; retaining the mint and gas reserve.`);
-        const result = await swapEthToUsdc(eth, usdc);
+        const result = await swapEthToUsdc(eth, usdc, swapFees);
         ui.ok(`Funding swap confirmed: ${result.txHash}`);
       },
     }, allowSwap);

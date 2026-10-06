@@ -559,9 +559,9 @@ export async function startMining(tokenId: bigint, options: MiningOptions = {}):
                   if (abortController.signal.aborted) throw err;
                   const msg = err instanceof Error ? err.message : String(err);
                   if (msg.includes("insufficient USDC")) {
-                    console.log(`  ${ui.yellow("x402 GPU: insufficient USDC.")} Run: ${ui.cyan("apow wallet fund")}`);
+                    console.log(`  ${ui.yellow("x402 GPU: insufficient USDC.")} Run: ${ui.cyan("apow start --easy")} for an ETH-only quote.`);
                   } else if (msg.includes("simulation_failed")) {
-                    console.log(`  ${ui.yellow("x402 GPU: EVM simulation failed.")} ${ui.dim("USDC approval or balance issue")}`);
+                    console.log(`  ${ui.yellow("x402 GPU: EVM simulation failed.")} ${ui.dim("Check balance, signing policy, and the service RPC")}`);
                   } else if (msg.includes("402")) {
                     console.log(`  ${ui.yellow("x402 GPU payment failed.")} ${ui.dim(msg.slice(0, 120))}`);
                   } else {
