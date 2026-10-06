@@ -1,7 +1,7 @@
 ---
 name: apow-mining
-description: This skill teaches your agent how to mine $AGENT coin via the apow-cli.
-allowed-tools: Bash(npx --yes apow-cli@0.12.0 start --easy)
+description: Set up APoW Easy Mode with one Base ETH deposit, a recoverable encrypted wallet, and remote GPU mining.
+allowed-tools: Bash(npx --yes apow-cli@0.12.2 start --easy) Bash(npx --yes apow-cli@0.12.2 wallet verify-recovery)
 metadata:
   openclaw:
     requires:
@@ -11,84 +11,106 @@ metadata:
 
 # APoW Mining
 
-Use this skill only to set up a fresh APoW mining wallet and run the official APoW miner. It is deliberately limited to that workflow.
+Use the official CLI to mine AGENT on Base with a dedicated low-balance wallet.
+SMHL means **Semantic-Mathematical Hybrid Lock**, adapted from
+[MoltCaptcha](https://github.com/MoltCaptcha/MoltCaptcha). APoW checks string
+format on-chain; it does not verify semantic meaning or prove AI authorship.
 
-APoW mining uses real assets on Base. Use a fresh, low-balance hot wallet dedicated to APoW. The CLI stores generated wallets as password-protected JSON keystores and applies a local signing policy with spend caps.
+## Runtime choice
 
-SMHL means **Semantic-Mathematical Hybrid Lock**, adapted from [MoltCaptcha](https://github.com/MoltCaptcha/MoltCaptcha). APoW verifies string format on-chain; it does not verify semantic meaning or prove AI authorship.
+Read the [personal assistant profiles](https://apow.io/docs/technical/assistants)
+for Grok Bot, Muse, Instinct, Wajo/Fo, OpenClaw, Hermes, Claude Code, Codex,
+Manus, Cowork, and Perplexity. Check Node 20+, outbound HTTPS, persistent files,
+secure CLI unlock, and the permitted process lifetime before funding.
 
-## Required approval
+Default to **Easy Mode**: wallet-paid RPC, mint LLM, and remote GPU grinding.
+A runner is still required to sign and submit transactions. Do not rent a VPS
+or switch to CPU mining by default. The current web app also needs its browser
+tab open; fully managed APoW jobs are [under development](https://apow.io/docs/technical/managed-mining).
+Do not claim that they are already available.
 
-Before running the miner, show the user this scope and wait for an explicit approval:
+## Scope and approval
 
-> Approve APoW to create or use one fresh encrypted low-balance wallet; spend up to the local policy caps for one rig mint and x402 RPC, SMHL, and grinding services; submit Base mining transactions continuously until stopped; and sweep mined AGENT only if a payout address and automatic sweep were already configured?
-
-Do not infer approval from funding, installation, prior mining, or a general request to inspect the project. Run the command only after the user approves the scope above.
-
-Once approved, select the CLI's existing Easy Mode with the pinned package:
+Explain once: one dedicated encrypted wallet, one rig mint within the local
+policy, ETH-to-USDC funding conversion, x402 services, and continuous Base
+mining transactions until stopped. Give the applicable caps and real costs.
+Obtain explicit approval if this scope has not already been approved. Honor
+an existing approval and budget; do not ask again at every routine step.
+Funding does not authorize access to another wallet or automatic top-ups.
+Do not enable sweeps unless the user already configured and approved them.
 
 ```bash
-npx --yes apow-cli@0.12.0 start --easy
+npx --yes apow-cli@0.12.2 start --easy
 ```
 
-Funding is a mandatory external prerequisite: the CLI cannot mint or mine until
-the dedicated wallet has ETH and USDC on Base. The same command handles the two
-phases around that checkpoint:
+Run only this pinned Easy Mode flow and the recovery check below in this skill.
+If the package is unavailable, report it; do not substitute `latest`.
 
-- before funding, it creates an encrypted APoW wallet if needed, configures Easy
-  Mode, prints the complete Base address and required balances, then stops;
-- after the user funds that address and confirms funding, rerunning it detects
-  an existing rig or mints one within the configured cap, starts continuous
-  mining, retries normal transient failures, and keeps signing behind the local
-  enforce-mode policy.
+## Recover before funding
 
-The user's approval authorizes this Easy Mode invocation; Wallet Protocol v2 remains the sole runtime opsec and signing-policy layer. The user can stop mining with Ctrl+C.
+The user enters a password directly in a trusted terminal, or uses a supported
+secret manager. Never ask for a password, private key, or recovery phrase in chat.
+For headless operation, a secret-manager `KEYSTORE_PASSWORD_CMD` reference must
+be saved in the private runner configuration. A password generated only in
+process memory is not recoverable after a restart. A browser credential vault
+must not be assumed to provide CLI secrets.
 
-## Funding handoff
+```bash
+npx --yes apow-cli@0.12.2 wallet verify-recovery
+```
 
-If the CLI pauses because the wallet needs funds:
+The CLI checks a fresh-process unlock of the **same address** before giving
+funding instructions. The user must also keep the encrypted keystore and
+password separately outside the runner. Process verification does not prove
+VM durability or an independent backup. If secure unlock is unavailable, stop
+before funding. Keep an existing locked wallet; do not replace it.
 
-1. Return the complete Base wallet address and the ETH and USDC minimums printed by the CLI.
-2. Tell the user to send those assets to that address on Base.
-3. Stop. Do not move, convert, or source funds for the user.
-4. After the user confirms funding, resume the same Easy Mode flow with the pinned `start --easy` command.
+## One deposit
 
-Funding is a handoff, not permission to operate another wallet or move assets.
+Ask for **Base ETH only**, using the complete address and live amount printed
+by the CLI. The quote includes the current rig fee, conservative ETH reserve,
+swap gas, and a missing 2 USDC service budget. It is not a fixed USD quote.
+Do not ask the user to buy or send USDC separately. After deposit, rerun the
+same pinned start command: it converts the required ETH, checks landed balances,
+and mints or resumes an existing rig. It stops before a swap that would consume
+the ETH reserve.
 
-## Security boundaries
+Solana SOL/USDC funding exists only with a configured Squid integration and a
+verified deposit-address quote. Never send SOL to the Base EOA. That optional
+bridge route requires the separate funding guide and the user's choice of asset;
+this default skill uses the Base ETH handoff.
 
-- Never request, read, reveal, copy, or transmit wallet secrets.
-- Never search files, directories, environment variables, shell history, mounted drives, or other machines for wallets or credentials.
-- Never import or operate a main wallet for this skill.
-- Never create a raw-key file or place a raw wallet secret in project configuration.
-- Invoke only the single pinned `start --easy` command in this skill; every other CLI command is out of scope.
-- Never change the signing policy from `enforce`.
-- Never raise the mint, transfer, sweep, or x402 spend caps.
-- Never install or execute an unpinned package version.
-- Never continue if the package version, contract addresses, chain, approval scope, or policy state differs from what the CLI displays.
+## Run and report
 
-If setup asks for a keystore password, the user must enter it directly into their local terminal or provide it through their own secret manager. Never ask them to paste it into chat.
+Start one runner per wallet. Record its process handle and inspect recent logs.
+Use the assistant profile's supported background mechanism. A background PID
+is not proof of survival after a session or VM ends.
 
-## Expected policy caps
+Report these states accurately: wallet recovery verified; awaiting ETH; funded;
+rig minted or found; runner active; first confirmed mine. Show a Base transaction
+hash for a confirmed mine. A health check or remote GPU request alone is not a
+mine. Never invent network activity, competing GPU counts, yield, or profitability.
 
-The default enforce-mode policy limits:
+Local CPU mining is a separately chosen novelty experiment. Do not enable local
+fallback after remote errors without the user's instruction. A quiet-network
+success does not establish useful performance under competition.
 
-- one rig mint to at most `0.01 ETH`;
-- each x402 payment to at most `1 USDC`;
-- aggregate x402 payments to at most `20 USDC` per UTC day;
-- transfers and sweeps to their separately configured destinations and caps.
+## Policy and failure handling
 
-Treat the CLI’s displayed policy as authoritative. If it is less restrictive than these defaults, stop and ask the user to review it.
+Keep the default signing policy in enforce mode. Default ceilings are 0.01 ETH
+per rig mint, 1 USDC per x402 request, and 20 USDC per UTC day. Swaps have their
+own 0.02 ETH ceiling. Lower user-approved limits take precedence. These ceilings
+do not constitute a hard USD cap on gas, swaps, hosting, or exchange-rate changes.
+Never raise caps or disable enforcement to make a task proceed.
 
-## Failure handling
+- Locked wallet or missing durable secret: repair supported local unlock; no replacement wallet.
+- Funding missing: return the single Base ETH quote; resume the same address after deposit.
+- Unsupported runner: report the exact missing capability; use an already approved host, without a new rental.
+- Policy denial: stop and report the requested action and cap.
+- GPU cold startup: allow the CLI's 330-second transport deadline; do not launch duplicate paid requests.
+- Unknown payment/transaction outcome: stop and reconcile before manually resuming.
+- Normal transient failures: let the CLI's bounded retries run; do not silently change mode.
+- User stop: stop the process and report any in-flight transaction or unresolved payment.
 
-- No wallet: allow `start` to create one encrypted APoW wallet.
-- Password unavailable: pause for direct local entry; do not handle it in chat.
-- Funding needed: use the Base-only handoff above.
-- Policy not in enforce mode: stop.
-- User approval for the scoped Easy Mode command missing: stop.
-- Package version unavailable: stop; do not substitute `latest`.
-- RPC, SMHL, grinder, or transaction failure: report the concise error and let the CLI’s bounded retry behavior handle transient failures.
-- Mining stopped: report whether the user interrupted it or the CLI exited with an error.
-
-Do not expand scope to “helpful” wallet operations. This skill’s complete job is the existing Easy Mode flow: encrypted APoW setup, a Base funding handoff, and policy-capped mining.
+Keep wallet secrets out of logs, project files, repositories, agent memory, and
+other agents' workspaces. Do not search for credentials or operate a main wallet.

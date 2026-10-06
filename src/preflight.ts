@@ -11,7 +11,8 @@ import { getGrindUrl, isHttpGrinderConfigured } from "./grinder-http";
 import { loadPolicy } from "./policy/policy";
 import { spentTodayUsdc } from "./policy/spend-ledger";
 import { claudeSubscriptionEnv, codexSubscriptionEnv } from "./secure-env";
-import { publicClient, account } from "./wallet";
+import { publicClient, account, getFundingClients } from "./wallet";
+import { MINT_GAS_RESERVE_ETH } from "./base-funding";
 import * as ui from "./ui";
 
 const agentCoinAbi = agentCoinAbiJson as Abi;
@@ -19,7 +20,6 @@ const miningAgentAbi = miningAgentAbiJson as Abi;
 
 const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as Address;
 const USDC_DECIMALS = 6;
-const MINT_GAS_RESERVE_ETH = parseEther("0.003");
 
 const erc20BalanceAbi = [
   {
@@ -132,17 +132,11 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
   // Check x402: USDC balance BEFORE RPC check (can't use x402 without USDC)
   let x402Funded = false;
   if (config.useX402 && account) {
-    if (!config.rpcUrl) {
-      x402Funded = true; // optimistic — the x402 RPC check below will verify reachability.
-      ui.warn("Skipping x402 USDC precheck because RPC_URL is not set; refusing to use public Base RPC endpoints");
-    } else {
+    {
       try {
         // Use a separate lightweight client to avoid chicken-and-egg
         // (can't use x402 to check if we can pay for x402)
-        const checkClient = createPublicClient({
-          chain: base,
-          transport: http(config.rpcUrl),
-        });
+        const checkClient = getFundingClients().publicClient;
         const usdcBalance = (await checkClient.readContract({
           address: USDC_ADDRESS,
           abi: erc20BalanceAbi,
@@ -154,7 +148,7 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
           results.push({
             label: "No USDC balance — QuickNode x402 requires USDC on Base",
             passed: false,
-            fix: `Send at least 2.00 USDC to ${account.address} on Base for x402 starting balance; add more if you want extra headroom. Run \`apow fund\` to bridge from Solana or Ethereum.`,
+            fix: "Run `apow start --easy` to quote an ETH-only deposit and convert the service budget to USDC.",
           });
         } else {
           x402Funded = true;
@@ -165,9 +159,7 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
           });
         }
       } catch {
-        // USDC check failed — can't verify, warn but don't block
-        x402Funded = true; // optimistic — let the RPC check determine reachability
-        ui.warn("Could not check USDC balance — QuickNode x402 may fail if wallet has no USDC");
+        results.push({ label: "Could not verify x402 funding", passed: false, fix: "Retry when the funding RPC responds" });
       }
     }
   }
@@ -248,7 +240,7 @@ export async function runPreflight(level: PreflightLevel): Promise<void> {
             results.push({
               label: `Mint-ready ETH balance (${ethBalance.toFixed(6)} ETH)`,
               passed: false,
-              fix: `Mint needs ${formatEther(mintPrice)} ETH for the rig plus ~${formatEther(MINT_GAS_RESERVE_ETH)} ETH for the getChallenge and mint transactions. Send at least ${formatEther(requiredBalance)} ETH to ${account.address} on Base.`,
+              fix: `Mint price is ${formatEther(mintPrice)} ETH; the CLI also retains a conservative ${formatEther(MINT_GAS_RESERVE_ETH)} ETH reserve. The reserve is not a transaction fee. Run apow start --easy for the complete ETH-only quote.`,
             });
           } else {
             results.push({

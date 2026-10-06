@@ -12,6 +12,28 @@ const WETH = TOKENS.base.weth;
 const USDC = TOKENS.base.usdc;
 const FEE_TIER = 500; // 0.05% pool (highest TVL)
 
+/** Read-only QuoterV2 simulation. Include a 2% input buffer, rounded up. */
+async function quoteForExactOutput(tokenIn: Address, tokenOut: Address, amount: bigint): Promise<bigint> {
+  const { publicClient } = getFundingClients();
+  const { result } = await publicClient.simulateContract({
+    address: "0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a",
+    abi: [{ name: "quoteExactOutputSingle", type: "function", stateMutability: "nonpayable", inputs: [{
+      name: "params", type: "tuple", components: [
+        { name: "tokenIn", type: "address" }, { name: "tokenOut", type: "address" },
+        { name: "amount", type: "uint256" }, { name: "fee", type: "uint24" },
+        { name: "sqrtPriceLimitX96", type: "uint160" },
+      ],
+    }], outputs: [{ name: "amountIn", type: "uint256" }, { name: "sqrtPriceX96After", type: "uint160" },
+      { name: "initializedTicksCrossed", type: "uint32" }, { name: "gasEstimate", type: "uint256" }] }] as const,
+    functionName: "quoteExactOutputSingle",
+    args: [{ tokenIn, tokenOut, amount, fee: FEE_TIER, sqrtPriceLimitX96: 0n }],
+  });
+  return (result[0] * BigInt(10000 + SLIPPAGE_BPS) + 9999n) / 10000n;
+}
+
+export const quoteEthForUsdc = (usdcOut: bigint) => quoteForExactOutput(WETH, USDC, usdcOut);
+export const quoteUsdcForEth = (ethOut: bigint) => quoteForExactOutput(USDC, WETH, ethOut);
+
 const erc20Abi = [
   {
     type: "function" as const,

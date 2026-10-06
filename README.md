@@ -32,19 +32,24 @@ npx apow-cli
 > **v0.8.0+: Bring your own RPC or use auto-pay.** You need a Base RPC endpoint. Two options:
 >
 > 1. **Bring your own** (free): Get a free RPC URL from [Alchemy](https://www.alchemy.com/), [QuickNode](https://www.quicknode.com/), or any Base RPC provider. Set `RPC_URL` in your `.env`.
-> 2. **QuickNode x402** (paid, zero setup): Set `USE_X402=true` in your `.env`. Your mining wallet pays for RPC usage via the [x402 payment protocol](https://www.x402.org/). Start with at least 2.00 USDC on Base and add more for headroom. No API key or account needed.
+> 2. **QuickNode x402** (paid, zero setup): Set `USE_X402=true` in your `.env`. Your mining wallet pays for RPC usage via the [x402 payment protocol](https://www.x402.org/). Deposit Base ETH through the funding flow; the CLI converts the initial 2.00 USDC service budget. No API key or account needed.
 >
 > Run `apow setup` to configure interactively.
 
 ## For AI Agents
 
-Mining cannot begin until the dedicated wallet has ETH and USDC on Base. The
-same command handles both phases: it first creates/configures the wallet and
-prints its funding address, then automatically mints and mines when rerun after
-the user funds that address and confirms funding.
+Deposit **Base ETH only**. The CLI quotes the live rig price, retains ETH for gas,
+and converts the service budget to USDC. It tests wallet recovery before giving
+funding instructions. Rerun the same command after deposit to mint or resume
+an existing rig; the wallet address stays the same.
+
+See the [assistant profiles](https://apow.io/docs/technical/assistants) for Grok Bot,
+Muse, Instinct, Wajo, OpenClaw, Hermes, Claude Code, Codex, and other runtimes.
+The [managed cloud service](https://apow.io/docs/technical/managed-mining) is in
+development; the current CLI still needs a runner.
 
 ```bash
-npx --yes apow-cli@0.12.0 start --easy
+npx --yes apow-cli@0.12.2 start --easy
 ```
 
 Relevant Easy Mode settings include:
@@ -58,7 +63,9 @@ ALLOW_LOCAL_FALLBACK_WITH_X402=false
 ```
 
 The keystore password is prompted interactively. For headless launch services,
-provide `KEYSTORE_PASSWORD` from your shell, process manager, or secret store.
+save a `KEYSTORE_PASSWORD_CMD` reference in the private `.env` and use a supported
+secret manager. Run `apow wallet verify-recovery` before funding. A password kept
+only in process memory cannot recover after a restart. Never send secrets in chat.
 Never put it in chat or commit it to a project file. See [skill.md](skill.md) for
 the narrow autonomous mining workflow.
 
@@ -78,8 +85,9 @@ If you want to control each step manually, the older step-by-step flow is still 
 |---------|-------------|
 | `apow start [--easy]` | Existing Easy/Advanced flow: setup -> Base funding check/handoff -> mint -> mine |
 | `apow setup` | Agent-first setup wizard: Easy Mode (x402 everywhere) or Advanced Mode |
-| `apow fund` | Interactive bridge/deposit route and ETH+USDC auto-split |
+| `apow fund` | ETH-only funding quote, conversion, and configured bridge routes |
 | `apow wallet new` | Generate a new encrypted mining wallet |
+| `apow wallet verify-recovery` | Test fresh-process unlock before funding |
 | `apow wallet list` | List every wallet generated locally by this APoW CLI and mark the active wallet |
 | `apow wallet use [address-or-number]` | Select a generated wallet for the current project (`select` is an alias) |
 | `apow wallet show` | Show configured wallet address |
@@ -109,7 +117,7 @@ ALLOW_LOCAL_FALLBACK_WITH_X402=false  # Easy Mode default: do not burn local CPU
 # LLM_PROVIDER=clawrouter     # x402: clawrouter | API key: openai/anthropic/gemini/deepseek/qwen | local/subscription CLI: ollama/claude-code/codex
 # LLM_MODEL=...              # Optional override; x402 selects automatically
 # LLM_API_KEY=sk-...          # Required only for API-key providers
-# KEYSTORE_PASSWORD=...       # Headless unlock only; prefer shell/process secret storage over committing to .env
+# KEYSTORE_PASSWORD=          # Temporary unlock only; never store the password here
 # KEYSTORE_PASSWORD_CMD=...   # Preferred headless unlock command, stdout is used as password
 # APOW_POLICY=enforce         # enforce | warn | off
 # APOW_PAYOUT_ADDRESS=0x...   # optional cold payout wallet for AGENT sweeps
@@ -194,29 +202,28 @@ yet recorded as a completed APoW mainnet mint.
 
 ## Funding (v0.7.0+)
 
-Mining requires two assets on Base: **ETH** (gas) and **USDC** (x402 RPC).
-`apow start` checks both and gives a Base funding handoff without moving funds.
-The separate `fund` command provides an interactive bridge or auto-split flow:
+Send **one asset: Base ETH**. `apow start --easy` quotes the current rig price,
+a conservative 0.003 ETH reserve, swap gas, and the missing 2 USDC service budget.
+The reserve is not the actual gas cost per mine. The Uniswap quote includes a
+2% input buffer and requires enough USDC output; the CLI checks balances again
+after the swap. It stops if conversion would consume the required ETH reserve.
 
 ```bash
-# From Solana (deposit address — send from any wallet, QR code included)
-apow fund --chain solana --token sol              # bridge SOL → ETH, auto-swap portion to USDC
-apow fund --chain solana --token usdc             # bridge USDC, auto-swap portion to ETH
-
-# From Ethereum mainnet
-apow fund --chain ethereum                        # bridge ETH → ETH on Base, auto-swap portion to USDC
-
-# Already on Base
-apow fund --chain base --token eth                # show address, wait for deposit, auto-split
-apow fund --chain base --token usdc               # show address, wait for deposit, auto-split
-
-# Skip auto-split (keep single asset)
-apow fund --chain base --no-swap
+apow start --easy                       # quote, deposit ETH, then rerun to convert/mint/mine
+apow fund                              # default Base ETH; resumes existing deposits
+apow fund --chain solana --token sol    # configured Squid route: SOL to Base ETH
+apow fund --chain solana --token usdc   # configured Squid route: USDC to Base ETH
+apow fund --chain ethereum --token eth
+apow fund --no-swap                     # quote only; no conversion
 ```
 
-**Solana/Ethereum bridging:** Uses [Squid Router](https://squidrouter.com/) (Chainflip). Generates a one-time deposit address with QR code — send from any wallet. Requires `SQUID_INTEGRATOR_ID` in `.env` (free at [squidrouter.com](https://app.squidrouter.com/)).
+Solana routes require an operator-configured `SQUID_INTEGRATOR_ID`. They are
+unavailable until configured. Bridge quotes must cover the Base requirement
+after fees and slippage before a deposit address is offered. Do not send SOL
+to the Base wallet address. Keep the bridge request ID and respect its expiry.
 
-**Auto-split targets:** 0.003 ETH (gas for ~100 mine txns) + 2.00 USDC (minimum x402 starting balance). If both are already met, the CLI skips the swap.
+Existing USDC stays usable for services. Base ETH is the funding deposit asset;
+the CLI does not ask the user to supply both ETH and USDC.
 
 ## x402 GPU Grinding
 

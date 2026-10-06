@@ -11,11 +11,15 @@ const patterns: Array<{
   classify: (msg: string) => ClassifiedError;
 }> = [
   {
+    test: (m) => m.includes("payment outcome is unknown"),
+    classify: (msg) => ({ category: "fatal", userMessage: msg, recovery: "Check the service job/payment result before manually resuming. Do not repeat an unknown paid request." }),
+  },
+  {
     test: (m) => m.includes("Policy denied:"),
     classify: (msg) => ({
       category: "setup",
       userMessage: msg,
-      recovery: "Review `apow policy show`, set a payout if needed, or temporarily use `APOW_POLICY=warn` while debugging.",
+      recovery: "Review `apow policy show` and the requested operation. Keep policy enforcement enabled.",
     }),
   },
   {

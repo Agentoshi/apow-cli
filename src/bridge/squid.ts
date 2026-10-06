@@ -3,6 +3,7 @@
 // Requires SQUID_INTEGRATOR_ID (free, apply at squidrouter.com).
 
 import { CHAIN_IDS, TOKENS } from "./constants";
+import { formatEther, parseUnits } from "viem";
 
 const SQUID_API = "https://v2.api.squidrouter.com/v2";
 
@@ -24,13 +25,13 @@ export const SQUID_ROUTES = {
     srcDecimals: 9,
     dstDecimals: 18,
   },
-  sol_usdc_to_base_usdc: {
+  sol_usdc_to_base_eth: {
     fromChain: CHAIN_IDS.solana,
     fromToken: TOKENS.solana.usdc,
     toChain: CHAIN_IDS.base,
-    toToken: TOKENS.base.usdc,
+    toToken: TOKENS.base.nativeSquid,
     srcDecimals: 6,
-    dstDecimals: 6,
+    dstDecimals: 18,
   },
   eth_to_base_eth: {
     fromChain: CHAIN_IDS.ethereum,
@@ -46,6 +47,7 @@ export interface DepositInfo {
   depositAddress: string;
   requestId: string;
   expectedReceive: string;
+  minimumReceive: string;
   expiresAt?: string;
 }
 
@@ -68,9 +70,11 @@ export async function getDepositAddress(
   baseAddress: string,
   amount: number,
   route: SquidRoute = SQUID_ROUTES.sol_to_eth,
+  minimumEth = 0n,
 ): Promise<DepositInfo> {
   const integratorId = getIntegratorId();
-  const rawAmount = Math.floor(amount * 10 ** route.srcDecimals).toString();
+  if (!/^0x[0-9a-fA-F]{40}$/.test(baseAddress) || !Number.isFinite(amount) || amount <= 0) throw new Error("Invalid bridge recipient or amount");
+  const rawAmount = parseUnits(amount.toFixed(route.srcDecimals), route.srcDecimals).toString();
 
   // Step 1: Get route quote
   const routeResponse = await fetch(`${SQUID_API}/route`, {
@@ -79,6 +83,7 @@ export async function getDepositAddress(
       "Content-Type": "application/json",
       "x-integrator-id": integratorId,
     },
+    signal: AbortSignal.timeout(15_000),
     body: JSON.stringify({
       fromChain: route.fromChain,
       toChain: route.toChain,
@@ -87,6 +92,7 @@ export async function getDepositAddress(
       fromAmount: rawAmount,
       toAddress: baseAddress,
       quoteOnly: false,
+      slippage: 2,
       enableBoost: true,
       prefer: ["CHAINFLIP_DEPOSIT_ADDRESS"],
     }),
@@ -112,17 +118,22 @@ export async function getDepositAddress(
     throw new Error(
       "DEPOSIT_ADDRESS_UNAVAILABLE: Squid returned a contract-call route instead of a deposit address for this chain.\n" +
         "This means the bridge requires an on-chain transaction from the source chain.\n" +
-        "Use an alternative: bridge.base.org, send ETH on Base directly, or bridge from Solana.",
+        "Send ETH on Base directly instead. No deposit address was issued.",
     );
   }
 
-  // Step 2: Request deposit address from route
+  const minReceive = routeData.route?.estimate?.toAmountMin;
+  if (typeof minReceive !== "string" || !/^\d+$/.test(minReceive) || BigInt(minReceive) < minimumEth) {
+    throw new Error("The bridge quote does not guarantee enough Base ETH after fees and slippage. Increase the ETH target with --amount; no deposit address was issued.");
+  }
+  // Step 2: Request deposit address from a validated route
   const depositResponse = await fetch(`${SQUID_API}/deposit-address`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "x-integrator-id": integratorId,
     },
+    signal: AbortSignal.timeout(15_000),
     body: JSON.stringify({
       routeData: routeData.route,
     }),
@@ -136,6 +147,14 @@ export async function getDepositAddress(
   }
 
   const depositData = (await depositResponse.json()) as any;
+  const validAddress = typeof depositData.depositAddress === "string" && (route.fromChain === "solana"
+    ? /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(depositData.depositAddress)
+    : /^0x[0-9a-fA-F]{40}$/.test(depositData.depositAddress));
+  if (!validAddress
+    || !(depositData.requestId || routeData.requestId)) throw new Error("Bridge returned an invalid deposit address or request ID");
+  if (depositData.expiresAt && (!Number.isFinite(Date.parse(depositData.expiresAt)) || Date.parse(depositData.expiresAt) <= Date.now())) {
+    throw new Error("Bridge returned an expired or invalid deposit-address expiry");
+  }
 
   const toAmount = routeData.route?.estimate?.toAmount;
   const estimatedReceive = toAmount
@@ -146,6 +165,7 @@ export async function getDepositAddress(
     depositAddress: depositData.depositAddress,
     requestId: depositData.requestId || routeData.requestId,
     expectedReceive: estimatedReceive,
+    minimumReceive: formatEther(BigInt(minReceive)),
     expiresAt: depositData.expiresAt,
   };
 }
@@ -172,12 +192,12 @@ export async function pollBridgeStatus(
 
       const response = await fetch(`${SQUID_API}/status?${params}`, {
         headers: { "x-integrator-id": integratorId },
+        signal: AbortSignal.timeout(15_000),
       });
 
       if (response.ok) {
         const data = (await response.json()) as any;
-        const status: string =
-          data.squidTransactionStatus || data.status || "unknown";
+        const status = String(data.squidTransactionStatus || data.status || "unknown").toLowerCase();
 
         if (onUpdate) onUpdate(status);
 

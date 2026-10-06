@@ -50,11 +50,11 @@ let bootstrapWalletClient = bootstrapAccount
   : null;
 
 function shouldUseBootstrapFundingClients(): boolean {
-  return config.useX402 && config.chainName === "base" && !!config.rpcUrl;
+  return config.chainName === "base";
 }
 
 function getBootstrapTransport(): Transport {
-  return config.rpcUrl ? http(config.rpcUrl) : transport;
+  return config.chainName === "base" ? http(config.rpcUrl || "https://base.publicnode.com") : transport;
 }
 
 /** Reinitialize clients after config changes (e.g., x402 fallback). */

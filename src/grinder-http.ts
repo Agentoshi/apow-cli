@@ -16,7 +16,8 @@ import { config } from "./config";
 import type { LocalAccount } from "viem/accounts";
 
 const DEFAULT_GRIND_URL = "https://grind.apow.io/grind";
-const GRIND_HTTP_TIMEOUT_MS = 60_000;
+// The service allows 300 seconds including cold startup. Leave transport margin.
+const GRIND_HTTP_TIMEOUT_MS = 330_000;
 
 // Lazy singleton — created on first grind, reused across calls
 let _fetchWithPayment: typeof fetch | null = null;
@@ -92,13 +93,11 @@ export async function grindNonceHttp(
       }
       if (timeoutSignal.aborted) {
         resetPaymentFetch();
-        throw new Error(`Remote GPU grind timed out (${GRIND_HTTP_TIMEOUT_MS / 1000}s)`);
+        throw new Error(`Remote GPU grind timed out (${GRIND_HTTP_TIMEOUT_MS / 1000}s); payment outcome is unknown`);
       }
       resetPaymentFetch();
-      if (attempt === 1) {
-        continue;
-      }
-      throw new Error(`Remote GPU grind request failed: ${err instanceof Error ? err.message : String(err)}`);
+      // A lost response can follow a settled payment. Do not replay an unknown paid request.
+      throw new Error(`Remote GPU grind request failed; payment outcome is unknown: ${err instanceof Error ? err.message : String(err)}`);
     }
 
     if (response.ok) {
@@ -118,7 +117,7 @@ export async function grindNonceHttp(
 
     const combinedError = `${reason} ${bodyDetail}`.trim();
     const stalePaymentSession = /No matching payment requirements|facilitator|payment session|authorization/i.test(combinedError);
-    if (attempt === 1 && (stalePaymentSession || response.status >= 500)) {
+    if (attempt === 1 && response.status === 402 && stalePaymentSession) {
       resetPaymentFetch();
       continue;
     }
@@ -136,8 +135,9 @@ export async function grindNonceHttp(
       }
     }
     if (response.status === 504) {
-      throw new Error(`Remote GPU grind timed out (${GRIND_HTTP_TIMEOUT_MS / 1000}s)`);
+      throw new Error("Remote GPU service timed out; payment outcome is unknown");
     }
+    if (response.status >= 500) throw new Error(`GrindProxy HTTP ${response.status}; payment outcome is unknown`);
     throw new Error(`GrindProxy HTTP ${response.status}: ${(bodyDetail || body).slice(0, 200)}`);
   }
 

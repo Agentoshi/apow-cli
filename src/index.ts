@@ -23,6 +23,8 @@ import { detectMiners, detectMinersWithClient, formatHashpower, selectBestMiner 
 import { errorText } from "./errors";
 import { txUrl } from "./explorer";
 import { runFundFlow } from "./fund";
+import { prepareBaseFunding } from "./base-funding";
+import { verifyWalletRecovery } from "./wallet-recovery";
 import { resolveApiProvider, resolveLlmSetupMode, resolveLocalProvider } from "./llm-setup";
 import { runMintFlow } from "./mint";
 import { startMining } from "./miner";
@@ -43,7 +45,7 @@ import {
   saveEncryptedKeystoreFile,
   type GeneratedWalletRecord,
 } from "./wallet-store";
-import { account, getEthBalance, publicClient, reinitClients, requireWallet } from "./wallet";
+import { account, getEthBalance, getFundingClients, publicClient, reinitClients, requireWallet } from "./wallet";
 import { setSignerContext } from "./policy/context";
 import {
   getPayoutAddress,
@@ -367,7 +369,7 @@ async function setupWizard(options: SetupWizardOptions = {}): Promise<void> {
     console.log("");
     console.log(`  ${ui.dim("Back up the encrypted keystore and its password separately.")}`);
     console.log("");
-    console.log(`  ${ui.dim("Fund this address with ≥0.005 ETH on Base to start.")}`);
+    console.log(`  ${ui.dim("Verify wallet recovery before funding. apow start calculates the ETH deposit.")}`);
     console.log("");
   }
 
@@ -389,7 +391,7 @@ async function setupWizard(options: SetupWizardOptions = {}): Promise<void> {
     ui.ok("LLM: Auto (Zero Config via ClawRouter x402; wallet-paid in USDC)");
     ui.ok("Grinder: Auto (Zero Config via RunPod x402; wallet-paid in USDC)");
     console.log(`  ${ui.dim("Easy mode is agent-first: no RPC key, no LLM key, no GPU rental setup.")}`);
-    console.log(`  ${ui.dim(`Fund the wallet with ETH + USDC on Base, then run: apow start${options.easyMode ? " --easy" : ""}`)}`);
+    console.log(`  ${ui.dim(`Deposit Base ETH only. The CLI converts the service budget to USDC. Run: apow start${options.easyMode ? " --easy" : ""}`)}`);
   } else {
     // Advanced: user picks which services remain autonomous
     // Step 2: RPC
@@ -549,21 +551,24 @@ async function setupWizard(options: SetupWizardOptions = {}): Promise<void> {
   }
 }
 
-function showFundingHandoff(
-  address: `0x${string}`,
-  needsEth: boolean,
-  needsUsdc: boolean,
-  easyMode: boolean,
-): void {
+function showFundingHandoff(address: `0x${string}`, depositEth: bigint, easyMode: boolean): void {
   ui.warn("Pausing for Base funding.");
-  ui.hint(`Send funds to ${address} on Base.`);
-  if (needsEth) {
-    ui.hint(`Need at least ${MIN_ETH} ETH for gas and minting.`);
-  }
-  if (needsUsdc) {
-    ui.hint(`Need at least ${MIN_USDC} USDC for x402 RPC + LLM services.`);
-  }
+  ui.hint(`Send at least ${formatEther(depositEth)} ETH on Base to ${address}.`);
+  ui.hint("This quote includes the current mint price, an ETH reserve, and the USDC conversion if needed. Costs can change before deposit.");
+  ui.hint("The CLI converts ETH to USDC within the signing policy. You do not need to send USDC.");
   ui.hint(`After funds arrive, rerun \`apow start${easyMode ? " --easy" : ""}\`.`);
+}
+
+async function checkWalletRecovery(): Promise<void> {
+  if (!account || !config.keystorePath) throw new Error("Use an encrypted APoW wallet before funding.");
+  // A person can supply a separately retained password directly in a local terminal.
+  // Headless agents must use a saved secret-manager command, never process memory alone.
+  const password = ui.isInteractiveSession()
+    ? await ui.promptSecret("Re-enter your separately saved keystore password to test recovery") : undefined;
+  if (ui.isInteractiveSession() && !password) throw new Error("Wallet recovery test cancelled.");
+  verifyWalletRecovery(config.keystorePath, account.address, password);
+  ui.ok(`Fresh-process unlock verified for ${account.address}.`);
+  ui.hint("Keep an independent encrypted-keystore backup and its password separately. This check does not verify host uptime or your backup.");
 }
 
 interface StartFlowOptions {
@@ -598,17 +603,24 @@ async function runStartFlow(options: StartFlowOptions = {}): Promise<void> {
       ui.hint("Restore the default enforce-mode Easy Mode caps, then retry.");
       return;
     }
+    await writeEnvFile({ USE_X402: "true", USE_X402_GRIND: "true", LLM_PROVIDER: "clawrouter", ALLOW_LOCAL_FALLBACK_WITH_X402: "false" });
+    reloadConfig();
+    reinitClients();
   }
 
-  const bootstrapClient = config.useX402 && config.chainName === "base" && config.rpcUrl
-    ? createPublicClient({ chain: config.chain, transport: http(config.rpcUrl) })
-    : publicClient;
+  await checkWalletRecovery();
+  const bootstrapClient = getFundingClients().publicClient;
 
   let miners = [] as Awaited<ReturnType<typeof detectMinersWithClient>>;
   try {
     miners = await detectMinersWithClient(bootstrapClient, account.address);
   } catch {
-    ui.warn("Could not query wallet rigs via bootstrap RPC — continuing with funding guidance.");
+    throw new Error("Could not query owned rigs. Retry when the funding RPC responds; do not create a replacement wallet or rig.");
+  }
+  const funding = await prepareBaseFunding(miners.length === 0, true);
+  if (!funding.ready) {
+    showFundingHandoff(account.address, funding.depositEth, options.easyMode === true);
+    return;
   }
   if (miners.length > 0) {
     const best = selectBestMiner(miners);
@@ -616,49 +628,6 @@ async function runStartFlow(options: StartFlowOptions = {}): Promise<void> {
     console.log("");
     await runPreflight("mining");
     await startMining(best.tokenId, { easyMode: options.easyMode === true });
-    return;
-  }
-
-  let ethBalance = 0;
-  let usdcBalance = 0;
-  let balanceChecksAvailable = true;
-  try {
-    const [ethBalanceRaw, usdcBalanceRaw] = await Promise.all([
-      bootstrapClient.getBalance({ address: account.address }),
-      config.useX402
-        ? bootstrapClient.readContract({
-            address: config.chainName === "base" ? "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" : config.agentCoinAddress,
-            abi: erc20BalanceAbi,
-            functionName: "balanceOf",
-            args: [account.address],
-          }) as Promise<bigint>
-        : Promise.resolve(0n),
-    ]);
-    ethBalance = Number(formatEther(ethBalanceRaw));
-    usdcBalance = Number(formatUnits(usdcBalanceRaw, 6));
-  } catch {
-    balanceChecksAvailable = false;
-    ui.warn("Could not query wallet balances via bootstrap RPC — funding flow may still be needed.");
-  }
-
-  const needsEth = !balanceChecksAvailable || ethBalance < MIN_ETH;
-  const needsUsdc = config.useX402 && (!balanceChecksAvailable || usdcBalance < MIN_USDC);
-
-  if (needsEth || needsUsdc) {
-    console.log(`  ${ui.yellow("Funding needed before minting.")}`);
-    const fundingRows: [string, string][] = [
-      ["Wallet", `${account.address.slice(0, 6)}...${account.address.slice(-4)}`],
-      ["ETH", balanceChecksAvailable ? `${ethBalance.toFixed(6)} ETH${needsEth ? ` (need ≥${MIN_ETH})` : ""}` : "unknown (RPC check failed)"],
-    ];
-    if (config.useX402) {
-      fundingRows.push([
-        "USDC",
-        balanceChecksAvailable ? `${usdcBalance.toFixed(2)} USDC${needsUsdc ? ` (need ≥${MIN_USDC})` : ""}` : "unknown (RPC check failed)",
-      ]);
-    }
-    ui.table(fundingRows);
-    console.log("");
-    showFundingHandoff(account.address, needsEth, needsUsdc, options.easyMode === true);
     return;
   }
 
@@ -718,11 +687,12 @@ async function main(): Promise<void> {
     .description("Fund your wallet — bridge from Solana/Ethereum or send on Base")
     .option("--chain <chain>", "Source chain: solana, ethereum, base")
     .option("--token <token>", "Source token: sol, usdc, eth")
-    .option("--amount <eth>", "Target ETH amount (default: 0.005)")
+    .option("--amount <eth>", "Bridge ETH target (default: live funding requirement)")
     .option("--no-swap", "Skip auto-split after bridging")
     .action(async (opts: { chain?: string; token?: string; amount?: string; swap?: boolean }) => {
       setSignerContext("fund");
-      await unlockConfiguredKeystoreIfNeeded();
+      const unlocked = await unlockConfiguredKeystoreIfNeeded();
+      if (config.keystorePath && !unlocked && !account) return;
       if (!config.privateKey || !account) {
         ui.warn("No wallet configured — launching setup first.");
         await setupWizard();
@@ -733,6 +703,7 @@ async function main(): Promise<void> {
           return;
         }
       }
+      await checkWalletRecovery();
       await runFundFlow(opts);
     });
 
@@ -741,7 +712,8 @@ async function main(): Promise<void> {
     .description("Mint a new miner NFT (Easy Mode: x402 LLM, no API key)")
     .action(async () => {
       setSignerContext("mint");
-      await unlockConfiguredKeystoreIfNeeded();
+      const unlocked = await unlockConfiguredKeystoreIfNeeded();
+      if (config.keystorePath && !unlocked && !account) return;
       if (!config.privateKey || !account) {
         ui.warn("No wallet configured — launching setup first.");
         await setupWizard();
@@ -751,6 +723,12 @@ async function main(): Promise<void> {
           ui.error("Wallet configuration did not complete.");
           return;
         }
+      }
+      await checkWalletRecovery();
+      const funding = await prepareBaseFunding(true, true);
+      if (!funding.ready) {
+        showFundingHandoff(account!.address, funding.depositEth, false);
+        return;
       }
       await runPreflight("wallet");
       await runMintFlow();
@@ -883,6 +861,13 @@ async function main(): Promise<void> {
   const walletCmd = program
     .command("wallet")
     .description("Wallet generation and management");
+
+  walletCmd.command("verify-recovery")
+    .description("Test a fresh-process unlock of the same wallet before funding")
+    .action(async () => {
+      if (!await unlockConfiguredKeystoreIfNeeded()) throw new Error("Unlock the existing wallet; do not replace it.");
+      await checkWalletRecovery();
+    });
 
   walletCmd
     .command("new")
