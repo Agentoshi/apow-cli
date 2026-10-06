@@ -15,6 +15,8 @@ Use this skill only to set up a fresh APoW mining wallet and run the official AP
 
 APoW mining uses real assets on Base. Use a fresh, low-balance hot wallet dedicated to APoW. The CLI stores generated wallets as password-protected JSON keystores and applies a local signing policy with spend caps.
 
+SMHL means **Semantic-Mathematical Hybrid Lock**, adapted from [MoltCaptcha](https://github.com/MoltCaptcha/MoltCaptcha). APoW verifies string format on-chain; it does not verify semantic meaning or prove AI authorship.
+
 ## Required approval
 
 Before running the miner, show the user this scope and wait for an explicit approval:
